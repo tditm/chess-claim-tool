@@ -2,6 +2,7 @@
 Chess Claim Tool: Claims
 
 Copyright (C) 2019 Serntedakis Athanasios <thanasis@brainfriz.com>
+Modfied by Tomasz Delega (C) 2026 AI-assisted refactoring
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -16,100 +17,151 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+
+from dataclasses import dataclass
 from enum import Enum
 from math import ceil
-
 from chess.pgn import Game
 
 
 def get_players(game: Game) -> str:
-    white = game.headers["White"][:22]
-    black = game.headers["Black"][:22]
+    """
+    Returns a short 'White - Black' string for display.
+    Names are trimmed to keep UI compact.
+    """
+    white = game.headers.get("White", "")[:22]
+    black = game.headers.get("Black", "")[:22]
     return f"{white} - {black}"
+
+
+class ClaimType(Enum):
+    THREEFOLD = "3-fold repetition"
+    FIVEFOLD = "5-fold repetition"
+    FIFTY_MOVES = "50-move rule"
+    SEVENTYFIVE_MOVES = "75-move rule"
+
+
+@dataclass(frozen=True)
+class ClaimEntry:
+    """
+    Represents a single claim event detected in a game.
+    start_move_counter is used for rules that require
+    tracking the beginning of a counting sequence (e.g. 50-move rule).
+    """
+    type: ClaimType
+    board_number: str
+    players: str
+    move: str
+    game_index: int
+    move_counter: int          # final move index (claim moment)
+    start_move_counter: int    # starting move index
+    comment: str = ""          # NEW — PGN comment (e.g. "First counting move: X")
 
 
 class Claims:
     """
-    Attributes:
-        dont_check(list): Is a list of player's names who's their game shall not
-        be checked again. This list is used for games that a 5 Fold Repetition
-        or 75 Moves Rule occurred.
-        entries(list): The list of entries. Each element of entries lists
-        is a list ([str,str,str,str]).
+    Tracks draw claims (3-fold, 5-fold, 50-move, 75-move) across multiple games.
+    Stores unique entries and prevents duplicates.
     """
 
     def __init__(self):
-        self.dont_check = set()
-        self.entries = set()
+        self.dont_check: set[str] = set()
+        self.entries: set[ClaimEntry] = set()
 
-    def check_game(self, game: Game) -> set:
-        """ Checks the game for 3 Fold Repetitions, 5 Fold Repetitions, 50 Move Draw Rule and for the 75 Move Draw Rule.
-        Args:
-            game: The game to be checked.
+    def check_game(self, game: Game, game_index: int) -> set[ClaimEntry]:
+        """
+        Analyzes a single game and detects draw claims.
+        Returns only new entries (no duplicates).
         """
         move_counter = 0
         board = game.board()
         players = get_players(game)
         board_number = self.get_board_number(game)
-        game_entries = set()
 
-        # Loop to go through of all the moves of the game.
+        new_entries: set[ClaimEntry] = set()
+
+        # Track the last irreversible move (capture or pawn move)
+        last_irreversible_move = 0
+
         for move in game.mainline_moves():
-            san_move = str(board.san(move))
-            board.push(move)
+            san_move = board.san(move)
 
+            # Detect irreversible moves BEFORE pushing
+            if board.is_capture(move) or board.piece_at(move.from_square).piece_type == 1:
+                last_irreversible_move = move_counter + 1
+
+            board.push(move)
             move_counter += 1
             printable_move = self.get_printable_move(move_counter, san_move)
 
+            # 5-fold repetition → immediate stop
             if board.is_fivefold_repetition():
-                game_entries.add((ClaimType.FIVEFOLD, board_number, players, printable_move))
+                entry = ClaimEntry(
+                    ClaimType.FIVEFOLD, board_number, players,
+                    printable_move, game_index, move_counter, last_irreversible_move,
+                    ""   # no comment
+                )
+                new_entries.add(entry)
                 self.dont_check.add(players)
                 break
-            if board.is_seventyfive_moves():
-                game_entries.add((ClaimType.SEVENTYFIVE_MOVES, board_number, players, printable_move))
-                self.dont_check.add(players)
-                break
-            if board.is_fifty_moves():
-                game_entries.add((ClaimType.FIFTY_MOVES, board_number, players, printable_move))
-            if board.is_repetition(count=3):
-                game_entries.add((ClaimType.THREEFOLD, board_number, players, printable_move))
 
-        game_entries = game_entries - self.entries
-        self.entries.update(game_entries)
-        return game_entries
+            # 75-move rule → immediate stop (NO COMMENT)
+            if board.is_seventyfive_moves():
+                entry = ClaimEntry(
+                    ClaimType.SEVENTYFIVE_MOVES, board_number, players,
+                    printable_move, game_index, move_counter, last_irreversible_move,
+                    ""   # no comment
+                )
+                new_entries.add(entry)
+                self.dont_check.add(players)
+                break
+
+            # 50-move rule → ADD COMMENT
+            if board.is_fifty_moves():
+                comment = f"First counting move: {last_irreversible_move}"
+                new_entries.add(ClaimEntry(
+                    ClaimType.FIFTY_MOVES, board_number, players,
+                    printable_move, game_index, move_counter, last_irreversible_move,
+                    comment
+                ))
+
+            # 3-fold repetition → NO COMMENT
+            if board.is_repetition(count=3):
+                new_entries.add(ClaimEntry(
+                    ClaimType.THREEFOLD, board_number, players,
+                    printable_move, game_index, move_counter, last_irreversible_move,
+                    ""   # no comment
+                ))
+
+        # Remove duplicates compared to previous runs
+        unique_entries = new_entries.difference(self.entries)
+        self.entries.update(unique_entries)
+        return unique_entries
 
     def empty_dont_check(self) -> None:
+        """Clears the list of players whose games should not be rechecked."""
         self.dont_check.clear()
 
     def empty_entries(self) -> None:
+        """Clears all stored claim entries."""
         self.entries.clear()
 
     @staticmethod
     def get_printable_move(move_counter: int, san_move: str) -> str:
-        """ Returns: The move as it's been displayed in the view.
-        Args:
-            move_counter: The number of the moves played in the game.
-            san_move: The SAN representation of the move
+        """
+        Formats the move number for display (e.g. '12.Nf3' or '12...Nf6').
         """
         move_num = ceil(move_counter / 2)
-
-        if move_counter % 2 == 0:
-            move = f"{move_num}...{san_move}"
-        else:
-            move = f"{move_num}.{san_move}"
-        return move
+        return f"{move_num}...{san_move}" if move_counter % 2 == 0 else f"{move_num}.{san_move}"
 
     @staticmethod
     def get_board_number(game: Game) -> str:
-        if "Board" in game.headers:
-            return str(game.headers["Board"])
-        if "Round" in game.headers:
-            return str(game.headers["Round"])
+        board = game.headers.get("Board")
+        if board and board != "None":
+            return board
+
+        rnd = game.headers.get("Round")
+        if rnd and rnd != "None":
+            return rnd
+
         return "-"
-
-
-class ClaimType(Enum):
-    THREEFOLD = "3 Fold Repetition"
-    FIVEFOLD = "5 Fold Repetition"
-    FIFTY_MOVES = "50 Moves Rule"
-    SEVENTYFIVE_MOVES = "75 Moves Rule"
