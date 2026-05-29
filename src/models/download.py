@@ -2,6 +2,7 @@
 Chess Claim Tool: DownloadPgn
 
 Copyright (C) 2019 Serntedakis Athanasios <thanasis@brainfriz.com>
+Modfied by Tomasz Delega (C) 2026 AI-assisted refactoring
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -20,29 +21,59 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 import urllib.request
 from urllib.error import HTTPError, URLError
 import certifi
+import time
 
 
-def check_download(url: str, timeout=4) -> bool:
-    """ Checks if the url points to an existing pgn file.
-    Args:
-        timeout:
-        url(str): The location of the file to check.
-    Returns:
-        True if successful, False otherwise.
+def download_pgn(url: str, timeout=30) -> bytes:
     """
-    if not (url.endswith(".pgn")):
-        return False
+    Download PGN from URL with up to 3 retries.
+    Handles 404 as 'PGN not ready yet' and retries.
+    Returns bytes() on failure.
+    """
+    for attempt in range(1, 4):  # 3 próby
+        try:
+            response = urllib.request.urlopen(
+                url,
+                timeout=timeout,
+                cafile=certifi.where()
+            )
+            return response.read()
 
+        except HTTPError as e:
+            if e.code == 404:
+                # PGN jeszcze nie istnieje — normalne podczas rundy live
+                print(f"[Attempt {attempt}/3] 404 Not Found (PGN not ready yet): {url}")
+                time.sleep(3)
+                continue
+            else:
+                print(f"[Attempt {attempt}/3] HTTP error while downloading {url}: {e}")
+
+        except URLError as e:
+            print(f"[Attempt {attempt}/3] Network error while downloading {url}: {e}")
+
+        except TimeoutError:
+            print(f"[Attempt {attempt}/3] Timeout while downloading: {url}")
+
+        except Exception as e:
+            print(f"[Attempt {attempt}/3] Unexpected error while downloading {url}: {e}")
+
+        time.sleep(1)  # przerwa między próbami
+
+    print(f"Failed to download after 3 attempts: {url}")
+    return bytes()
+
+
+def check_download(url: str, timeout=10) -> bool:
+    """
+    Check if URL is reachable.
+    Returns True if server responds, False otherwise.
+    """
     try:
-        ret_code = urllib.request.urlopen(url, timeout=timeout, cafile=certifi.where()).getcode()
-    except (HTTPError, URLError, ValueError):
+        urllib.request.urlopen(
+            url,
+            timeout=timeout,
+            cafile=certifi.where()
+        )
+        return True
+    except Exception:
         return False
-    return ret_code == 200
-
-
-def download_pgn(url: str, timeout=10) -> bytes:
-    try:
-        response = urllib.request.urlopen(url, timeout=timeout, cafile=certifi.where())
-        return response.read()
-    except (HTTPError, URLError):
-        return bytes()
