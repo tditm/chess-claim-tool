@@ -2,6 +2,7 @@
 Chess Claim Tool
 
 Copyright (C) 2022 Serntedakis Athanasios <thanserd@hotmail.com>
+Modified by Tomasz Delega (C) 2026 AI-assisted refactoring
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
