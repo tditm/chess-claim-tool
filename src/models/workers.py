@@ -2,6 +2,7 @@
 Chess Claim Tool: workers
 
 Copyright (C) 2022 Serntedakis Athanasios <thanserd@hotmail.com>
+Modfied by Tomasz Delega (C) 2026 AI-assisted refactoring
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -16,6 +17,7 @@ GNU General Public License for more details.
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 """
+
 from __future__ import annotations
 
 import os.path
@@ -24,25 +26,25 @@ from typing import List, TYPE_CHECKING, Dict
 
 from PyQt5.QtCore import QRunnable, QThread, pyqtSignal
 from chess.pgn import read_game
+
 from src.helpers import get_appdata_path, Status
-from src.models.claims import get_players
+from src.models.claims import get_players, Claims, ClaimEntry
 from src.models.download import check_download, download_pgn
 
 if TYPE_CHECKING:
     from src.controllers import SourceDialogController
     from src.views.dialog_view import SourceHBox
-    from src.models.claims import Claims
     from threading import Event, Lock
     from PyQt5.QtWidgets import QAction
 
 
+# ---------------------------------------------------------
+# CHECK DOWNLOAD
+# ---------------------------------------------------------
+
 class CheckDownload(QRunnable):
-    """ Checks if a web source is valid.
-    Attributes:
-        controller: Object of SourceDialogController.
-        source: The web source to be checked.
-        download_id: A unique download id
-    """
+    """Checks if a web source is valid."""
+
     __slots__ = ["controller", "source", "download_id"]
 
     def __init__(self, controller: SourceDialogController, source: SourceHBox, download_id: int):
@@ -61,13 +63,13 @@ class CheckDownload(QRunnable):
             self.source.set_status(Status.ERROR)
 
 
-class DownloadGames(QThread):
-    """ Downloads a list of sources from the web.
+# ---------------------------------------------------------
+# DOWNLOAD GAMES
+# ---------------------------------------------------------
 
-    Attributes:
-        downloads: The list of urls to download.
-        stop_event: A stop signal that is emitted to stop this thread execution
-    """
+class DownloadGames(QThread):
+    """Downloads PGN files from the web."""
+
     status_signal = pyqtSignal(Status)
     INTERVAL = 4
     __slots__ = ["downloads", "stop_event", "app_path"]
@@ -104,24 +106,26 @@ class DownloadGames(QThread):
                 continue
 
 
-class Scan(QThread):
-    """ Continuously looks for a new games.pgn to scan. It creates another thread
-    to check the new pgn while it updates the GUI(claimsTable) with new entries.
+# ---------------------------------------------------------
+# SCAN PGN
+# ---------------------------------------------------------
 
-    Attributes:
-        filename: The path of the combined pgn file.
-        claims: An Object of Claims Class.
-        lock: The fileLock for the games.pgn between CheckPgn and MakePgn threads.
-        live_pgn_option: The checkbox object on the menu.
-        stop_event: A stop signal that is emitted to stop this thread execution
+class Scan(QThread):
     """
+    Continuously scans the combined PGN file for new games.
+    Emits ClaimEntry objects to update the GUI.
+    """
+
     __slots__ = ["filename", "claims", "lock", "live_pgn_option", "stop_event"]
 
-    add_entry_signal = pyqtSignal(tuple)
+    add_entry_signal = pyqtSignal(object)   # emits ClaimEntry
     status_signal = pyqtSignal(Status)
+    new_move_signal = pyqtSignal()
+
     INTERVAL = 4
 
-    def __init__(self, claims: Claims, filename: str, lock: Lock, live_pgn_option: QAction, stop_event: Event):
+    def __init__(self, claims: Claims, filename: str, lock: Lock,
+                 live_pgn_option: QAction, stop_event: Event):
         super().__init__()
         self.filename = filename
         self.claims = claims
@@ -140,6 +144,7 @@ class Scan(QThread):
 
             if self.is_file_updated(last_size, size_of_pgn):
                 self.status_signal.emit(Status.ACTIVE)
+                self.new_move_signal.emit()
                 self.check_pgn()
 
             self.status_signal.emit(Status.WAIT)
@@ -148,49 +153,55 @@ class Scan(QThread):
             self.stop_event.wait(self.INTERVAL)
 
     def check_pgn(self):
+        """
+        Reads the PGN file and emits new ClaimEntry objects.
+        """
+
         self.lock.acquire()
+        try:
+            with open(self.filename, "r", encoding="utf-8") as pgn:
+                game_index = 0
 
-        with open(self.filename) as pgn:
-            while not self.stop_event.is_set():
-                game = read_game(pgn)
+                while not self.stop_event.is_set():
+                    game = read_game(pgn)
+                    if not game:
+                        break
 
-                if not game:
-                    break
+                    if self.live_pgn_option.isChecked() and game.headers["Result"] != "*":
+                        continue
 
-                if self.live_pgn_option.isChecked() and game.headers["Result"] != "*":
-                    continue
+                    if get_players(game) in self.claims.dont_check:
+                        continue
 
-                if get_players(game) in self.claims.dont_check:
-                    continue
+                    entries = self.claims.check_game(game, game_index)
 
-                entries = self.claims.check_game(game)
-                for entry in entries:
-                    self.add_entry_signal.emit(entry)
+                    for entry in entries:
+                        self.add_entry_signal.emit(entry)
 
-        self.lock.release()
+                    game_index += 1
+
+        finally:
+            self.lock.release()
 
     @staticmethod
     def is_file_updated(last_size: int, current_size: int):
         return current_size != 0 and last_size != current_size
 
 
-class Stop(QThread):
-    """ Stops all the other running Threads(downloadWorker, makePgnWorker,scanWorker)
-    and resets the model for the next scan.
+# ---------------------------------------------------------
+# STOP WORKERS
+# ---------------------------------------------------------
 
-    Attributes:
-        stop_event: The stop event that can signal the termination of threads
-        download_worker: Running thread, object of Download Class.
-        make_pgn_worker: Running thread, object of makePgn Class.
-        scan_worker: Running thread, object of Scan Class.
-    """
+class Stop(QThread):
+    """Stops all running threads and resets the model."""
+
     enable_signal = pyqtSignal()
     disable_signal = pyqtSignal()
 
     __slots__ = ["stop_event", "make_pgn_worker", "scan_worker", "download_worker"]
 
-    def __init__(self, stop_event: Event, make_pgn_worker: Thread, scan_worker: QThread,
-                 download_worker: QThread = None):
+    def __init__(self, stop_event: Event, make_pgn_worker: Thread,
+                 scan_worker: QThread, download_worker: QThread = None):
         super().__init__()
         self.stop_event = stop_event
         self.download_worker = download_worker
@@ -203,22 +214,23 @@ class Stop(QThread):
 
         if self.download_worker:
             self.download_worker.wait()
+
         self.scan_worker.wait()
         self.make_pgn_worker.join()
 
         self.enable_signal.emit()
 
 
-class MakePgn(Thread):
-    """ Makes a combined pgn of all the sources available (using the filePathList).
-    The thread execution can be stopped by "setting" the event (`stop_event.set()`).
-    If the event is not provided the thread will only execute once.
+# ---------------------------------------------------------
+# MAKE PGN
+# ---------------------------------------------------------
 
-    Attributes:
-        filepaths: A list that contains all the files path(or url) which are valid.
-        stop_event: The event that is responsible for the execution of the thread.
-        lock: The fileLock for the games.pgn between CheckPgn and MakePgn threads.
+class MakePgn(Thread):
     """
+    Creates a combined PGN file from all available sources.
+    This worker does NOT emit Qt signals (it is a plain Thread).
+    """
+
     INTERVAL = 4
     __slots__ = ["filepaths", "stop_event", "is_running", "lock", "daemon"]
 
@@ -241,18 +253,28 @@ class MakePgn(Thread):
             self.stop_event.wait(self.INTERVAL)
 
     def make_pgn(self):
-        data = bytes()
+        """
+        Merges all PGN files into a single combined PGN.
+        Ensures proper separation between games.
+        """
+
+        data = b""
         for filepath in self.filepaths:
             try:
                 with open(filepath, "rb") as in_file:
-                    data += "\n\n".encode("utf-8") + in_file.read()
+                    content = in_file.read().strip()
+                    if not content:
+                        continue
+                    data += b"\n\n" + content + b"\n\n"
             except FileNotFoundError:
                 continue
 
         self.lock_file()
-        with open(self.filename, "wb") as file:
-            file.write(data)
-        self.release_file()
+        try:
+            with open(self.filename, "wb") as file:
+                file.write(data)
+        finally:
+            self.release_file()
 
     def lock_file(self):
         if self.lock:
