@@ -2,6 +2,7 @@
 Chess Claim Tool: main.css
 
 Copyright (C) 2019 Serntedakis Athanasios <thanasis@brainfriz.com>
+Modfied by Tomasz Delega (C) 2026 AI-assisted refactoring
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -17,17 +18,76 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+/* ===========================
+   GLOBAL LIGHT THEME
+   =========================== */
+
+* {
+    background-color: #ffffff;
+    color: #333333;
+    font-family: "Segoe UI", sans-serif;
+}
+
+/* ===========================
+   MENU BAR (Options / Help)
+   =========================== */
+
+QMenuBar {
+    background-color: #f2f2f2;      /* jasnoszare tło */
+    color: #333;
+}
+
+QMenuBar::item {
+    background-color: transparent;
+    padding: 4px 10px;
+}
+
+QMenuBar::item:selected {
+    background-color: #e0e0e0;      /* lekko ciemniejsze szare */
+}
+
+QMenu {
+    background-color: #ffffff;
+    border: 1px solid #cccccc;
+}
+
+QMenu::item:selected {
+    background-color: #e6f2ff;
+}
+
+/* ===========================
+   BUTTONS
+   =========================== */
+
+QPushButton {
+    background-color: #f5f5f5;
+    border: 1px solid #cccccc;
+    padding: 6px 12px;
+    border-radius: 4px;
+}
+
+QPushButton:hover {
+    background-color: #e9e9e9;
+}
+
+QPushButton:pressed {
+    background-color: #dcdcdc;
+}
+
+/* Add Source (+) */
 QPushButton#AddSource {
     border: none;
     background-color: transparent;
     margin-right: 7px;
 }
 
+/* Delete Source */
 QPushButton#DeleteSource {
     border: none;
     background-color: transparent;
 }
 
+/* Scan button (blue) */
 QPushButton#Scan {
     background-color: #1496e8;
     font-size: 17px;
@@ -35,6 +95,15 @@ QPushButton#Scan {
     color: #fff;
 }
 
+QPushButton#Scan:hover {
+    background-color: #0f86cf;
+}
+
+QPushButton#Scan:pressed {
+    background-color: #0c74b5;
+}
+
+/* Stop button (red) */
 QPushButton#Stop {
     background-color: #f22618;
     font-size: 17px;
@@ -42,36 +111,196 @@ QPushButton#Stop {
     color: #fff;
 }
 
+QPushButton#Stop:hover {
+    background-color: #d91f14;
+}
+
+QPushButton#Stop:pressed {
+    background-color: #b81a11;
+}
+
+/* Board Viewer (green — zostaje!) */
+QPushButton#BoardViewer {
+    background-color: #4caf50;
+    font-size: 17px;
+    font-weight: bold;
+    color: #fff;
+}
+
+QPushButton#BoardViewer:hover {
+    background-color: #43a047;
+}
+
+QPushButton#BoardViewer:pressed {
+    background-color: #388e3c;
+}
+
+/* Add Sources button */
 QPushButton#sources {
     font-size: 13px;
     padding: 5px;
 }
 
+/* ===========================
+   STATUS BAR
+   =========================== */
+
 QStatusBar {
     border-top: 1px solid #DCDCDC;
+    background-color: #fafafa;
 }
 
-QLabel#download-image, #source-image, #scan-image {
+QLabel#download-image,
+QLabel#source-image,
+QLabel#scan-image {
     margin-right: 10px;
 }
 
-QHeaderView {
-    background-color: #fff;
-    font-weight: bold;
-    color: #605f5f;
-    font-size: 12px;
+/* ===========================
+   TABLE (QTreeView)
+   =========================== */
+
+QTreeView {
+    background-color: #ffffff;
+    alternate-background-color: #f7f7f7;
+    border: 1px solid #dcdcdc;
 }
 
-QLabel#appname {
-    font-weight: bold;
-    font-size: 14px;
+QTreeView::item {
+    padding: 6px;
 }
 
-QLabel#copyright {
-    font-size: 10px;
+QTreeView::item:hover {
+    background-color: #e6f2ff;
 }
 
 QTreeView::item:selected {
     color: #fff;
     background-color: #006ae9;
+}
+
+/* Header — teraz szary */
+QHeaderView::section {
+    background-color: #f2f2f2;   /* szare tło nagłówka */
+    font-weight: bold;
+    color: #605f5f;
+    font-size: 12px;
+    padding: 4px;
+    border: 1px solid #dcdcdc;
+}
+
+/* ===========================
+   ABOUT DIALOG
+   =========================== */
+
+QLabel#appname {
+    font-weight: bold;
+    font-size: 18px;
+}
+
+QLabel#version {
+    font-size: 14px;
+    color: #555;
+}
+
+QLabel#copyright {
+    font-size: 13px;
+    color: #777;
+}
+
+/* ===========================
+   INPUTS
+   =========================== */
+
+QLineEdit {
+    background-color: #ffffff;
+    border: 1px solid #cccccc;
+    padding: 4px;
+    border-radius: 3px;
+}
+
+QLineEdit:focus {
+    border: 1px solid #1496e8;
+}
+
+/* ComboBox */
+QComboBox {
+    background-color: #ffffff;
+    border: 1px solid #cccccc;
+    padding: 4px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    selection-background-color: #006ae9;
+    selection-color: #ffffff;
+}
+
+/* ===========================
+   SCROLLBARS
+   =========================== */
+
+QScrollBar:vertical {
+    background: #f0f0f0;
+    width: 12px;
+}
+
+QScrollBar::handle:vertical {
+    background: #cccccc;
+    min-height: 20px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #b8b8b8;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0;
+}
+
+/* ===========================
+   DIALOGS
+   =========================== */
+
+QDialog {
+    background-color: #ffffff;
+    border: 1px solid #dcdcdc;
+}
+/* ==========================================
+   MENU CHECKBOXES — FIXED SPACING
+   ========================================== */
+
+/* square checkbox */
+QMenu::indicator {
+    width: 16px;
+    height: 16px;
+    min-width: 16px;
+    min-height: 16px;
+    max-width: 16px;
+    max-height: 16px;
+
+    border: 1px solid #444;
+    background-color: #ffffff;
+
+    margin-left: 4px;   /* small left margin */
+    margin-right: 6px;  /* space between checkbox and text */
+}
+
+/* checked state */
+QMenu::indicator:checked {
+    background-color: #1496e8;
+    border: 1px solid #0f86cf;
+}
+
+/* unchecked state */
+QMenu::indicator:unchecked {
+    background-color: #ffffff;
+    border: 1px solid #444;
+}
+
+/* restore normal spacing for ALL menu items */
+QMenu::item {
+    padding: 4px 10px;  /* default padding */
 }
