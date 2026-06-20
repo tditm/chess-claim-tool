@@ -39,8 +39,10 @@ class ClaimType(Enum):
     FIVEFOLD = "5-fold repetition"
     FIFTY_MOVES = "50-move rule"
     SEVENTYFIVE_MOVES = "75-move rule"
-
-
+    SCORESHEET_REMINDER = "Scoresheet reminder"
+    TWO_FOLD_WARNING = "2-fold repetition"
+    FORTYFIVE_MOVES_WARNING = "45-move reminder"
+    
 @dataclass(frozen=True)
 class ClaimEntry:
     """
