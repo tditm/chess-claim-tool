@@ -40,6 +40,9 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QAction,
     QDialog,
+    QSpinBox,
+    QCheckBox,
+    QWidgetAction,
 )
 
 from src.helpers import resource_path, Status
@@ -78,7 +81,6 @@ class ChessClaimView(QMainWindow):
     __slots__ = [
         "controller",
         "claims_table",
-        "live_pgn_option",
         "claims_table_model",
         "button_box",
         "ok_pixmap",
@@ -93,6 +95,10 @@ class ChessClaimView(QMainWindow):
         "status_bar",
         "about_dialog",
         "notification",
+        "scoresheet_action",
+        "scoresheet_spin",
+        "possible_threefold_action",
+        "possible_fiftymove_action",
     ]
 
     def __init__(self, controller: ChessClaimController) -> None:
@@ -106,7 +112,6 @@ class ChessClaimView(QMainWindow):
 
         # Main widgets
         self.claims_table = QTreeView()
-        self.live_pgn_option = QAction("Live PGN", self)
         self.claims_table_model = QStandardItemModel()
         self.button_box = ButtonBox()
 
@@ -132,6 +137,12 @@ class ChessClaimView(QMainWindow):
             self.notification = WindowsToaster("Chess Claim Tool")
         else:
             self.notification = None
+
+        # Scoresheet reminder widgets
+        self.scoresheet_action = None
+        self.scoresheet_spin = None
+        self.possible_threefold_action = None
+        self.possible_fiftymove_action = None
 
     def center(self) -> None:
         """Center the window on the screen."""
@@ -167,22 +178,106 @@ class ChessClaimView(QMainWindow):
 
     def create_menu(self) -> None:
         """Create the main menu bar."""
-        self.live_pgn_option.setCheckable(True)
-        about_action = QAction("About", self)
-
         menu_bar = self.menuBar()
 
+        # ---------------------------------------------------------
+        # OPTIONS MENU
+        # ---------------------------------------------------------
         options_menu = menu_bar.addMenu("&Options")
-        options_menu.addAction(self.live_pgn_option)
 
+        # ---------------------------------------------------------
+        # Scoresheet reminder (checkbox + spinbox)
+        # ---------------------------------------------------------
+        widget_scoresheet = QWidget()
+        layout_scoresheet = QHBoxLayout()
+        layout_scoresheet.setContentsMargins(10, 2, 10, 2)
+        layout_scoresheet.setSpacing(0)
+
+        self.scoresheet_action = QCheckBox("Scoresheet change reminder after move")
+        self.scoresheet_action.setChecked(False)
+
+        self.scoresheet_spin = QSpinBox()
+        self.scoresheet_spin.setRange(1, 200)
+        self.scoresheet_spin.setValue(55)
+        self.scoresheet_spin.setEnabled(False)
+
+        layout_scoresheet.addWidget(self.scoresheet_action)
+        layout_scoresheet.addWidget(self.scoresheet_spin)
+        layout_scoresheet.addStretch()
+        widget_scoresheet.setLayout(layout_scoresheet)
+
+        widget_action_scoresheet = QWidgetAction(self)
+        widget_action_scoresheet.setDefaultWidget(widget_scoresheet)
+        options_menu.addAction(widget_action_scoresheet)
+
+        # ---------------------------------------------------------
+        # Possible Threefold Reminder (checkbox)
+        # ---------------------------------------------------------
+        widget_threefold = QWidget()
+        layout_threefold = QHBoxLayout()
+        layout_threefold.setContentsMargins(10, 2, 10, 2)
+
+        self.possible_threefold_action = QCheckBox("Possible threefold reminder (2 fold)")
+        self.possible_threefold_action.setChecked(False)
+
+        layout_threefold.addWidget(self.possible_threefold_action)
+        layout_threefold.addStretch()
+        widget_threefold.setLayout(layout_threefold)
+
+        widget_action_threefold = QWidgetAction(self)
+        widget_action_threefold.setDefaultWidget(widget_threefold)
+        options_menu.addAction(widget_action_threefold)
+
+        # ---------------------------------------------------------
+        # Possible 50-move Reminder (checkbox)
+        # ---------------------------------------------------------
+        widget_fifty = QWidget()
+        layout_fifty = QHBoxLayout()
+        layout_fifty.setContentsMargins(10, 2, 10, 2)
+
+        self.possible_fiftymove_action = QCheckBox("Possible 50-move reminder (45 moves)")
+        self.possible_fiftymove_action.setChecked(False)
+
+        layout_fifty.addWidget(self.possible_fiftymove_action)
+        layout_fifty.addStretch()
+        widget_fifty.setLayout(layout_fifty)
+
+        widget_action_fifty = QWidgetAction(self)
+        widget_action_fifty.setDefaultWidget(widget_fifty)
+        options_menu.addAction(widget_action_fifty)
+
+        # Connect to controller
+        self.scoresheet_action.stateChanged.connect(self._update_scoresheet_settings)
+        self.scoresheet_spin.valueChanged.connect(self._update_scoresheet_settings)
+
+        self.possible_threefold_action.stateChanged.connect(
+            lambda state: setattr(self.controller, "possible_threefold_enabled", state)
+        )
+
+        self.possible_fiftymove_action.stateChanged.connect(
+            lambda state: setattr(self.controller, "possible_fiftymove_enabled", state)
+        )
+
+        # ---------------------------------------------------------
+        # HELP MENU
+        # ---------------------------------------------------------
+        about_action = QAction("About", self)
         about_menu = menu_bar.addMenu("&Help")
         about_menu.addAction(about_action)
         about_action.triggered.connect(self.controller.on_about_clicked)
 
+
+    def _update_scoresheet_settings(self) -> None:
+        """Update controller settings from menu widgets."""
+        enabled = self.scoresheet_action.isChecked()
+        self.scoresheet_spin.setEnabled(enabled)
+
+        self.controller.scoresheet_reminder_enabled = enabled
+        self.controller.scoresheet_threshold = self.scoresheet_spin.value()
+
     def create_claims_table(self) -> None:
         """Create and configure the claims table."""
-        from PyQt5.QtCore import Qt
-        from PyQt5.QtWidgets import QHeaderView, QAbstractItemView
+        from PyQt5.QtWidgets import QHeaderView
 
         # Basic table configuration
         self.claims_table.setFocusPolicy(Qt.NoFocus)
@@ -217,7 +312,7 @@ class ChessClaimView(QMainWindow):
 
         # Hard widths (no auto logic)
         self.claims_table.setColumnWidth(4, 400)   # Players: wide (≈40 chars)
-        self.claims_table.setColumnWidth(5, 100)    # Move: narrow
+        self.claims_table.setColumnWidth(5, 100)   # Move: narrow
 
         # Make sure header does not stretch the last section
         header.setStretchLastSection(False)
@@ -520,6 +615,14 @@ class ChessClaimView(QMainWindow):
                 exit_dialog.setIcon(exit_dialog.Warning)
                 exit_dialog.setStandardButtons(QMessageBox.Yes | QMessageBox.Cancel)
                 exit_dialog.setDefaultButton(QMessageBox.Cancel)
+
+                # --- poszerzenie przycisków ---
+                yes_button = exit_dialog.button(QMessageBox.Yes)
+                cancel_button = exit_dialog.button(QMessageBox.Cancel)
+                yes_button.setMinimumWidth(100)
+                cancel_button.setMinimumWidth(100)
+                # --------------------------------
+
                 replay = exit_dialog.exec()
 
                 if replay == QMessageBox.Yes:
@@ -580,6 +683,7 @@ class ButtonBox(QWidget):
         """Set callback for the board viewer button."""
         self.board_button.clicked.connect(on_clicked)
 
+
 class AboutDialog(QDialog):
     """
     About dialog GUI.
@@ -612,7 +716,7 @@ class AboutDialog(QDialog):
         appname.setObjectName("appname")
         appname.setAlignment(Qt.AlignCenter)
 
-        version = QLabel("Version 0.4.0")
+        version = QLabel("Version 0.4.1")
         version.setObjectName("version")
         version.setAlignment(Qt.AlignCenter)
 
