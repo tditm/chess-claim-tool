@@ -25,7 +25,7 @@ import io
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QListWidget, QLabel, QTextBrowser, QPushButton, QLineEdit,
-    QSizePolicy
+    QSizePolicy, QCheckBox
 )
 from PyQt5.QtGui import QPixmap, QPainter, QPen
 from PyQt5.QtCore import Qt, QRectF
@@ -47,13 +47,13 @@ class BoardViewerWindow(QMainWindow):
         self.resize(1100, 580)
 
         self.pgn_path = pgn_path
-        self.games = []
-        self.filtered_games = []
+        self.games = []              # [(index (1-based), game)]
+        self.filtered_games = []     # subset of self.games
         self.current_game = None
         self.current_board = None
         self.move_list = []
         self.move_index = 0
-        self.current_game_index = 0
+        self.current_game_index = 0  # row index in filtered_games (0-based)
 
         self.repetition_snapshots = set()
 
@@ -62,7 +62,6 @@ class BoardViewerWindow(QMainWindow):
         self._refresh_game_list()
 
         if self.filtered_games:
-            self.game_list.setCurrentRow(0)
             self.load_game_at_index(0)
 
         self.setFocusPolicy(Qt.StrongFocus)
@@ -75,15 +74,17 @@ class BoardViewerWindow(QMainWindow):
     # ---------------------------------------------------------
     # LOAD GAME / SELECTION
     # ---------------------------------------------------------
-    def load_game_at_index(self, game_index: int):
-        """Load a specific game from the PGN list (by index in self.games)."""
-        if not self.games:
+    def load_game_at_index(self, row: int):
+        """
+        Load a specific game by row index in self.filtered_games.
+        """
+        if not self.filtered_games:
             return
-        if game_index < 0 or game_index >= len(self.games):
+        if row < 0 or row >= len(self.filtered_games):
             return
 
-        self.current_game_index = game_index
-        index, game = self.games[game_index]
+        self.current_game_index = row
+        index, game = self.filtered_games[row]  # index = numer partii (1-based w PGN)
 
         self.current_game = game
         self.current_board = game.board()
@@ -93,7 +94,7 @@ class BoardViewerWindow(QMainWindow):
         self._compute_repetition_snapshots()
 
         if hasattr(self, "game_list"):
-            self.game_list.setCurrentRow(game_index)
+            self.game_list.setCurrentRow(row)
 
         self._refresh_pgn_with_highlight()
         self.update_board()
@@ -104,22 +105,7 @@ class BoardViewerWindow(QMainWindow):
         else:
             row = self.game_list.row(arg)
 
-        if row < 0 or row >= len(self.filtered_games):
-            return
-
-        index, game = self.filtered_games[row]
-
-        self.current_game_index = index
-
-        self.current_game = game
-        self.current_board = game.board()
-        self.move_list = list(game.mainline_moves())
-        self.move_index = len(self.move_list)
-
-        self._compute_repetition_snapshots()
-
-        self._refresh_pgn_with_highlight()
-        self.update_board()
+        self.load_game_at_index(row)
 
     # ---------------------------------------------------------
     # UI SETUP
@@ -138,10 +124,38 @@ class BoardViewerWindow(QMainWindow):
         self.search_box.textChanged.connect(self._apply_filter)
         left_layout.addWidget(self.search_box)
 
+        # Checkbox: show only active games
+        self.chk_active_only = QCheckBox("Show only active games")
+        self.chk_active_only.stateChanged.connect(self._apply_filter)
+        left_layout.addWidget(self.chk_active_only)
+
         self.game_list = QListWidget()
         self.game_list.setMinimumWidth(350)
         self.game_list.currentRowChanged.connect(self.on_game_selected)
         left_layout.addWidget(self.game_list)
+
+        # --- Game navigation buttons (FIRST / PREV / NEXT / LAST GAME) ---
+        game_nav_layout = QHBoxLayout()
+
+        self.btn_game_first = QPushButton("⏮")
+        self.btn_game_prev = QPushButton("◀")
+        self.btn_game_next = QPushButton("▶")
+        self.btn_game_last = QPushButton("⏭")
+
+        for btn in [self.btn_game_first, self.btn_game_prev, self.btn_game_next, self.btn_game_last]:
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+        self.btn_game_first.clicked.connect(self.go_first_game)
+        self.btn_game_prev.clicked.connect(self.go_prev_game)
+        self.btn_game_next.clicked.connect(self.go_next_game)
+        self.btn_game_last.clicked.connect(self.go_last_game)
+
+        game_nav_layout.addWidget(self.btn_game_first)
+        game_nav_layout.addWidget(self.btn_game_prev)
+        game_nav_layout.addWidget(self.btn_game_next)
+        game_nav_layout.addWidget(self.btn_game_last)
+
+        left_layout.addLayout(game_nav_layout)
 
         main_layout.addLayout(left_layout, 40)
 
@@ -164,7 +178,7 @@ class BoardViewerWindow(QMainWindow):
         self.pgn_view.setFont(font)
         right_layout.addWidget(self.pgn_view, 40)
 
-        # Navigation buttons
+        # Navigation buttons (moves)
         buttons_layout = QHBoxLayout()
         self.btn_start = QPushButton("⏮")
         self.btn_prev = QPushButton("◀")
@@ -217,27 +231,54 @@ class BoardViewerWindow(QMainWindow):
         self.filtered_games = list(self.games)
 
     def _apply_filter(self) -> None:
+        # zapamiętaj aktualnie wybraną partię po jej "index" (1-based z PGN)
+        selected_index = None
+        if 0 <= self.current_game_index < len(self.filtered_games):
+            selected_index = self.filtered_games[self.current_game_index][0]
+
         text = self.search_box.text().lower().strip()
+        active_only = self.chk_active_only.isChecked()
 
-        if not text:
-            self.filtered_games = list(self.games)
-        else:
-            self.filtered_games = []
+        self.filtered_games = []
+
+        for index, game in self.games:
+            white = game.headers.get("White", "").lower()
+            black = game.headers.get("Black", "").lower()
+            result = game.headers.get("Result", "").strip()
+
+            # --- filtr aktywnych partii ---
+            if active_only and result in ("1-0", "0-1", "1/2-1/2", "½-½"):
+                continue
+
+            # --- filtr tekstowy ---
+            if not text:
+                self.filtered_games.append((index, game))
+                continue
+
             is_number = text.isdigit()
-            number_query = int(text) if is_number else None
+            if is_number and index == int(text):
+                self.filtered_games.append((index, game))
+                continue
 
-            for index, game in self.games:
-                white = game.headers.get("White", "").lower()
-                black = game.headers.get("Black", "").lower()
-
-                if is_number and index == number_query:
-                    self.filtered_games.append((index, game))
-                    continue
-
-                if text in white or text in black:
-                    self.filtered_games.append((index, game))
+            if text in white or text in black:
+                self.filtered_games.append((index, game))
 
         self._refresh_game_list()
+
+        if not self.filtered_games:
+            return
+
+        # spróbuj wrócić do tej samej partii (po index), jeśli nadal jest w filtrze
+        if selected_index is not None:
+            for row, (idx, game) in enumerate(self.filtered_games):
+                if idx == selected_index:
+                    self.load_game_at_index(row)
+                    break
+            else:
+                # jeśli nie ma tej partii w nowym filtrze – wybierz pierwszą
+                self.load_game_at_index(0)
+        else:
+            self.load_game_at_index(0)
 
     def _refresh_game_list(self) -> None:
         self.game_list.clear()
@@ -363,7 +404,8 @@ class BoardViewerWindow(QMainWindow):
     def reload_pgn(self, pgn_path):
         """
         Reload PGN file and rebuild game list.
-        Keep the same game selected using current_game_index.
+        Keep the same game selected using current_game_index (row in filtered_games),
+        and respect current filters (search + active only).
         """
         try:
             with open(pgn_path, "r", encoding="utf-8") as f:
@@ -371,39 +413,23 @@ class BoardViewerWindow(QMainWindow):
         except Exception:
             return
 
-        # --- POPRAWIONE WCZYTYWANIE WIELU PARTII ---
-        self.all_games = []
+        self.pgn_path = pgn_path
+        self.games.clear()
+
         pgn_io = io.StringIO(text)
+        index = 1
         while True:
             game = chess.pgn.read_game(pgn_io)
             if game is None:
                 break
-            self.all_games.append(game)
+            self.games.append((index, game))
+            index += 1
 
-        self.filtered_games = [(i, g) for i, g in enumerate(self.all_games)]
-
-        # rebuild list widget
-        self.game_list.clear()
-        for idx, game in self.filtered_games:
-            white = game.headers.get("White", "White")
-            black = game.headers.get("Black", "Black")
-            result = game.headers.get("Result", "*")
-            self.game_list.addItem(f"{idx+1}. {white} vs {black}   {result}")
-
-        # restore selection of the current game
-        if 0 <= self.current_game_index < len(self.filtered_games):
-            self.game_list.setCurrentRow(self.current_game_index)
-
-            # reload the actual game object
-            _, game = self.filtered_games[self.current_game_index]
-            self.current_game = game
-            self.current_board = game.board()
-            self.move_list = list(game.mainline_moves())
-            self.move_index = len(self.move_list)
-
-            self._compute_repetition_snapshots()
-            self._refresh_pgn_with_highlight()
-            self.update_board()
+        # zamiast resetować filtered_games na pełną listę,
+        # ponownie stosujemy filtr (uwzględnia search + checkbox)
+        self._apply_filter()
+        # _apply_filter samo zadba o wybór odpowiedniej partii
+        # na podstawie selected_index / current_game_index
 
     # ---------------------------------------------------------
     # REPETITION SNAPSHOTS
@@ -573,3 +599,31 @@ class BoardViewerWindow(QMainWindow):
         self.move_index = move_index
         self.update_board()
         self._refresh_pgn_with_highlight()
+
+    # ---------------------------------------------------------
+    # GAME NAVIGATION
+    # ---------------------------------------------------------
+    def go_first_game(self):
+        if not self.filtered_games:
+            return
+        self.load_game_at_index(0)
+
+    def go_prev_game(self):
+        if not self.filtered_games:
+            return
+        row = self.game_list.currentRow()
+        if row > 0:
+            self.load_game_at_index(row - 1)
+
+    def go_next_game(self):
+        if not self.filtered_games:
+            return
+        row = self.game_list.currentRow()
+        if row < len(self.filtered_games) - 1:
+            self.load_game_at_index(row + 1)
+
+    def go_last_game(self):
+        if not self.filtered_games:
+            return
+        last_row = len(self.filtered_games) - 1
+        self.load_game_at_index(last_row)
