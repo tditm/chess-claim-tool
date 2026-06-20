@@ -130,7 +130,7 @@ class Scan(QThread):
         self.filename = filename
         self.claims = claims
         self.lock = lock
-        self.live_pgn_option = live_pgn_option
+        self.live_pgn_option = live_pgn_option   # może być None
         self.stop_event = stop_event
 
     def run(self):
@@ -142,7 +142,8 @@ class Scan(QThread):
             except FileNotFoundError:
                 size_of_pgn = 0
 
-            if self.is_file_updated(last_size, size_of_pgn):
+###            if self.is_file_updated(last_size, size_of_pgn):
+            if size_of_pgn != 0:       
                 self.status_signal.emit(Status.ACTIVE)
                 self.new_move_signal.emit()
                 self.check_pgn()
@@ -167,7 +168,14 @@ class Scan(QThread):
                     if not game:
                         break
 
-                    if self.live_pgn_option.isChecked() and game.headers["Result"] != "*":
+                    # ---------------------------------------------
+                    # FIX: Live PGN optional
+                    # ---------------------------------------------
+                    if (
+                        self.live_pgn_option
+                        and self.live_pgn_option.isChecked()
+                        and game.headers.get("Result") != "*"
+                    ):
                         continue
 
                     if get_players(game) in self.claims.dont_check:
