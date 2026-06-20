@@ -28,11 +28,12 @@ from PyQt5.QtCore import QThreadPool
 from PyQt5.QtWidgets import QApplication
 
 from src.helpers import get_appdata_path, Status
-from src.models.claims import Claims
+from src.models.claims import Claims, ClaimEntry, ClaimType
 from src.models.workers import CheckDownload, DownloadGames, MakePgn, Scan, Stop
 from src.views.dialog_view import AddSourceDialog, SourceHBox
 from src.views.main_view import ChessClaimView, sources_warning
 from src.board_viewer import BoardViewerWindow
+from src.models.claims import get_players
 
 
 class ChessClaimController(QApplication):
@@ -40,7 +41,13 @@ class ChessClaimController(QApplication):
     __slots__ = [
         'view', 'model', 'sources_dialog',
         'make_pgn_worker', 'stop_worker', 'download_worker', 'scan_worker',
-        'stop_event', 'board_viewer'
+        'stop_event', 'board_viewer',
+        'scoresheet_reminder_enabled', 'scoresheet_threshold',
+        'scoresheet_reminder_fired',
+        'possible_threefold_enabled', 'possible_fiftymove_enabled',
+        'threefold_fired', 'fiftymove_fired',
+        'games',
+        'claims'
     ]
 
     def __init__(self) -> None:
@@ -48,6 +55,7 @@ class ChessClaimController(QApplication):
 
         self.view = ChessClaimView(self)
         self.model = Claims()
+        self.claims = Claims()
         self.sources_dialog = None
 
         self.make_pgn_worker = None
@@ -58,6 +66,25 @@ class ChessClaimController(QApplication):
         self.stop_event = Event()
         self.board_viewer = None
 
+        # Scoresheet reminder
+        self.scoresheet_reminder_enabled = False
+        self.scoresheet_threshold = 55
+        self.scoresheet_reminder_fired: Dict[int, bool] = {}
+
+        # Possible reminders
+        self.possible_threefold_enabled = False
+        self.possible_fiftymove_enabled = False
+        self.shown_reminders = set()
+
+        self.threefold_fired: Dict[int, bool] = {}
+        self.fiftymove_fired: Dict[int, bool] = {}
+
+        # Wspólna lista gier
+        self.games: List = []
+
+    # ---------------------------------------------------------
+    # START
+    # ---------------------------------------------------------
     def do_start(self) -> None:
         app_path = get_appdata_path()
         os.makedirs(app_path, exist_ok=True)
@@ -84,9 +111,8 @@ class ChessClaimController(QApplication):
         if self.board_viewer is None:
             self.board_viewer = BoardViewerWindow(pgn_path=pgn_path)
         else:
-            if hasattr(self.board_viewer, "reload_pgn"):
-                self.board_viewer.reload_pgn(pgn_path)
-                self.board_viewer.go_end()
+            self.board_viewer.reload_pgn(pgn_path)
+            self.board_viewer.go_end()
 
         self.board_viewer.show()
         self.board_viewer.raise_()
@@ -95,7 +121,6 @@ class ChessClaimController(QApplication):
         if self.board_viewer is None:
             self.on_board_viewer_clicked()
         else:
-            # upewnij się, że Viewer ma świeży PGN
             self.on_pgn_updated()
 
         try:
@@ -111,28 +136,29 @@ class ChessClaimController(QApplication):
     # PGN UPDATE
     # ---------------------------------------------------------
     def on_pgn_updated(self):
-        """
-        Called whenever games.pgn is rewritten.
-        Refreshes Board Viewer if open and jumps to last move.
-        """
-        if self.board_viewer is None:
-            return
-
         app_path = get_appdata_path()
         pgn_path = os.path.join(app_path, "games.pgn")
 
-        if hasattr(self.board_viewer, "reload_pgn"):
+        if not os.path.exists(pgn_path):
+            return
+
+        import chess.pgn
+        self.games = []
+        with open(pgn_path, "r", encoding="utf-8") as f:
+            while True:
+                g = chess.pgn.read_game(f)
+                if not g:
+                    break
+                self.games.append(g)
+
+        if self.board_viewer is not None:
             self.board_viewer.reload_pgn(pgn_path)
             self.board_viewer.go_end()
 
     # ---------------------------------------------------------
-    # NEW MOVE → rebuild PGN + refresh viewer
+    # NEW MOVE
     # ---------------------------------------------------------
     def on_new_move(self):
-        """
-        Called when Scan worker detects a new move.
-        Rebuilds games.pgn and immediately refreshes Board Viewer (if open).
-        """
         if not self.sources_dialog:
             return
 
@@ -142,12 +168,144 @@ class ChessClaimController(QApplication):
 
         lock = Lock()
         make_pgn = MakePgn(filepaths, self.stop_event, lock)
-
-        # MakePgn jest zwykłym wątkiem – wywołujemy logikę bez kombinowania z sygnałami
         make_pgn.make_pgn()
 
-        # PGN gotowy – odśwież Viewer (jeśli otwarty)
         self.on_pgn_updated()
+
+        self.check_scoresheet_reminders()
+        self.check_possible_threefold()
+        self.check_possible_fiftymove()
+
+    # ---------------------------------------------------------
+    # SCORESHEET REMINDER
+    # ---------------------------------------------------------
+    def check_scoresheet_reminders(self):
+        if not self.scoresheet_reminder_enabled:
+            return
+
+        if not self.games:
+            return
+
+        for idx, game in enumerate(self.games, start=1):
+
+            result = game.headers.get("Result", "").strip()
+            if result in ("1-0", "0-1", "1/2-1/2", "½-½"):
+                continue
+
+            move_count = len(list(game.mainline_moves())) // 2
+            already = self.scoresheet_reminder_fired.get(idx, False)
+
+            if not already and move_count >= self.scoresheet_threshold:
+                self.scoresheet_reminder_fired[idx] = True
+
+                board_number = self.claims.get_board_number(game)
+
+                entry = ClaimEntry(
+                    type=ClaimType.SCORESHEET_REMINDER,
+                    board_number=board_number,
+                    players=get_players(game),
+                    move=f"{self.scoresheet_threshold}-move game",
+                    game_index=idx - 1,
+                    move_counter=move_count,
+                    start_move_counter=0
+                )
+                self.view.add_item_to_table(entry)
+
+    # ---------------------------------------------------------
+    # TWO-FOLD
+    # ---------------------------------------------------------
+    def check_possible_threefold(self):
+        if not self.possible_threefold_enabled:
+            return
+
+        if not self.games:
+            return
+
+        import chess
+
+        for idx, game in enumerate(self.games, start=1):
+
+            board = game.board()
+            positions = {}
+
+            # initial position
+            start_fen = " ".join(board.fen().split(" ")[:4])
+            positions[start_fen] = 1
+
+            for move in game.mainline_moves():
+                board.push(move)
+
+                fen = " ".join(board.fen().split(" ")[:4])
+                positions[fen] = positions.get(fen, 0) + 1
+
+                if positions[fen] == 2:
+
+                    # unique key for this reminder
+                    key = ("twofold", idx, fen)
+
+                    if key not in self.shown_reminders:
+                        self.shown_reminders.add(key)
+
+                        board_number = self.claims.get_board_number(game)
+
+                        entry = ClaimEntry(
+                            type=ClaimType.TWO_FOLD_WARNING,
+                            board_number=board_number,
+                            players=get_players(game),
+                            move="near 3-fold repetition",
+                            game_index=idx - 1,
+                            move_counter=len(list(game.mainline_moves())),
+                            start_move_counter=0
+                        )
+                        self.view.add_item_to_table(entry)
+
+    # ---------------------------------------------------------
+    # 45-MOVE
+    # ---------------------------------------------------------
+    def check_possible_fiftymove(self):
+        if not self.possible_fiftymove_enabled:
+            return
+
+        if not self.games:
+            return
+
+        import chess
+
+        for idx, game in enumerate(self.games, start=1):
+
+            board = game.board()
+            halfmove_clock = 0
+
+            for move in game.mainline_moves():
+
+                piece = board.piece_at(move.from_square)
+                if board.is_capture(move) or (piece and piece.piece_type == chess.PAWN):
+                    halfmove_clock = 0
+                else:
+                    halfmove_clock += 1
+
+                board.push(move)
+
+                if halfmove_clock >= 90:
+
+                    # unique key for this reminder
+                    key = ("fiftymove", idx, halfmove_clock)
+
+                    if key not in self.shown_reminders:
+                        self.shown_reminders.add(key)
+
+                        board_number = self.claims.get_board_number(game)
+
+                        entry = ClaimEntry(
+                            type=ClaimType.FORTYFIVE_MOVES_WARNING,
+                            board_number=board_number,
+                            players=get_players(game),
+                            move="near 50-move rule",
+                            game_index=idx - 1,
+                            move_counter=len(list(game.mainline_moves())),
+                            start_move_counter=0
+                        )
+                        self.view.add_item_to_table(entry)
 
     # ---------------------------------------------------------
     # SCAN / DOWNLOAD / STOP
@@ -198,6 +356,7 @@ class ChessClaimController(QApplication):
         self.stop_worker.disable_signal.connect(self.on_stop_disable_status)
         self.stop_worker.start()
         self.stop_worker.wait()
+        self.view.change_scan_button_text(Status.STOP)
 
         self.model.empty_dont_check()
         self.model.empty_entries()
@@ -217,7 +376,7 @@ class ChessClaimController(QApplication):
         else:
             self.view.set_sources_status(Status.ERROR)
 
-    def update_claims_table(self, entry: list) -> None:
+    def update_claims_table(self, entry) -> None:
         self.view.add_item_to_table(entry)
 
     def update_download_status(self, status: Status) -> None:
@@ -240,9 +399,6 @@ class ChessClaimController(QApplication):
     def start_make_png_worker(self, lock: Lock) -> None:
         filepaths = self.sources_dialog.get_filepath_list()
         self.make_pgn_worker = MakePgn(filepaths, self.stop_event, lock)
-
-        # tu nie polegamy na finished_signal/finished – Scan i tak wykryje zmiany,
-        # a Viewer będzie odświeżany przez on_new_move / on_pgn_updated
         self.make_pgn_worker.start()
 
     def start_scan_worker(self, lock: Lock) -> None:
@@ -253,16 +409,17 @@ class ChessClaimController(QApplication):
             self.model,
             filename,
             lock,
-            self.view.live_pgn_option,
+            None,
             self.stop_event
         )
 
         self.scan_worker.add_entry_signal.connect(self.update_claims_table)
         self.scan_worker.status_signal.connect(self.update_bar_scan_status)
 
-        # reaguj na każdy nowy ruch
         if hasattr(self.scan_worker, "new_move_signal"):
             self.scan_worker.new_move_signal.connect(self.on_new_move)
+
+        self.scan_worker.finished.connect(self.on_new_move)
 
         self.scan_worker.start()
 
@@ -280,6 +437,7 @@ class SourceDialogController:
         self.filepaths: List[str] = []
         self.downloads: Dict[str, str] = dict()
         self.apply_lock = Lock()
+        self.shown_reminders = set()
 
     def do_start(self) -> None:
         self.view.set_gui()
