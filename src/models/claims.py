@@ -42,6 +42,9 @@ class ClaimType(Enum):
     SCORESHEET_REMINDER = "Scoresheet reminder"
     TWO_FOLD_WARNING = "2-fold repetition"
     FORTYFIVE_MOVES_WARNING = "45-move reminder"
+    TIMECONTROL_REMINDER = "Time control reminder"
+    LOW_TIME_REMINDER = "Low time reminder"
+    FLAG_FALL_REMINDER = "Flag fall reminder"
     
 @dataclass(frozen=True)
 class ClaimEntry:
