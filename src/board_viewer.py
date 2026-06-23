@@ -71,6 +71,32 @@ class BoardViewerWindow(QMainWindow):
         self.game_list.setFocusPolicy(Qt.NoFocus)
         self.search_box.setFocusPolicy(Qt.ClickFocus)
 
+    def _last_clk_for_color(self, nodes, upto_idx: int, is_white: bool):
+        """
+        Zwraca ostatni [%clk] dla danej strony (is_white)
+        z węzłów nodes[0..upto_idx].
+        """
+        for i in range(upto_idx, -1, -1):
+            if (i % 2 == 0) == is_white:
+                comment = getattr(nodes[i], "comment", "") or ""
+                clk = self.extract_clock(comment)
+                if clk:
+                    return clk
+        return "--:--:--"
+
+    def _last_emt_for_color(self, nodes, upto_idx: int, is_white: bool):
+        """
+        Zwraca ostatni [%emt] dla danej strony (is_white)
+        z węzłów nodes[0..upto_idx].
+        """
+        for i in range(upto_idx, -1, -1):
+            if (i % 2 == 0) == is_white:
+                comment = getattr(nodes[i], "comment", "") or ""
+                emt = self.extract_emt(comment)
+                if emt is not None:
+                    return emt
+        return None
+
     # ---------------------------------------------------------
     # LOAD GAME / SELECTION
     # ---------------------------------------------------------
@@ -166,7 +192,21 @@ class BoardViewerWindow(QMainWindow):
         self.board_label.setMinimumSize(350, 350)
         self.board_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.board_label.setAlignment(Qt.AlignCenter)
+
+        # CLOCK LABELS (medium size)
+        self.black_clock_label = QLabel("Black: --:--:--")
+        self.black_clock_label.setAlignment(Qt.AlignCenter)
+        self.black_clock_label.setStyleSheet("font-size: 15px; font-weight: bold;")
+        self.black_clock_label.setFixedHeight(24)
+
+        self.white_clock_label = QLabel("White: --:--:--")
+        self.white_clock_label.setAlignment(Qt.AlignCenter)
+        self.white_clock_label.setStyleSheet("font-size: 15px; font-weight: bold;")
+        self.white_clock_label.setFixedHeight(24)
+
+        right_layout.addWidget(self.black_clock_label)
         right_layout.addWidget(self.board_label, stretch=60)
+        right_layout.addWidget(self.white_clock_label)
 
         self.pgn_view = QTextBrowser()
         self.pgn_view.setOpenLinks(False)
@@ -223,8 +263,14 @@ class BoardViewerWindow(QMainWindow):
                     game = chess.pgn.read_game(f)
                     if game is None:
                         break
+
+                    # pomiń niekompletne / uszkodzone gry
+                    if not game.headers.get("White") or not game.headers.get("Black"):
+                        continue
+
                     self.games.append((index, game))
                     index += 1
+
         except Exception as e:
             self.game_list.addItem(f"Error loading PGN: {e}")
 
@@ -281,6 +327,9 @@ class BoardViewerWindow(QMainWindow):
             self.load_game_at_index(0)
 
     def _refresh_game_list(self) -> None:
+        # ukryj listę na czas przebudowy, żeby nie migała
+        self.game_list.setVisible(False)
+
         self.game_list.clear()
 
         for index, game in self.filtered_games:
@@ -303,6 +352,9 @@ class BoardViewerWindow(QMainWindow):
                 item_text = f"{index}. {white} – {black}"
 
             self.game_list.addItem(item_text)
+
+        # pokaż gotową listę
+        self.game_list.setVisible(True)
 
     # ---------------------------------------------------------
     # PGN HTML
@@ -403,33 +455,66 @@ class BoardViewerWindow(QMainWindow):
     # ---------------------------------------------------------
     def reload_pgn(self, pgn_path):
         """
-        Reload PGN file and rebuild game list.
-        Keep the same game selected using current_game_index (row in filtered_games),
-        and respect current filters (search + active only).
+        Reload PGN file safely.
+        If the PGN is temporarily broken (live write), keep old games.
         """
+        old_move_index = self.move_index
+        old_len = len(self.move_list) if self.move_list else 0
+
         try:
             with open(pgn_path, "r", encoding="utf-8") as f:
                 text = f.read()
         except Exception:
             return
 
-        self.pgn_path = pgn_path
-        self.games.clear()
+        # tymczasowa lista – nie ruszamy self.games, dopóki parsing się nie uda
+        new_games = []
 
         pgn_io = io.StringIO(text)
         index = 1
+
         while True:
-            game = chess.pgn.read_game(pgn_io)
+            try:
+                game = chess.pgn.read_game(pgn_io)
+            except Exception:
+                # parser wywalił się – przerwij i NIE aktualizuj listy
+                return
+
             if game is None:
                 break
-            self.games.append((index, game))
+
+            # pomiń niekompletne / błędne gry
+            if not game.headers.get("White") or not game.headers.get("Black"):
+                continue
+
+            new_games.append((index, game))
             index += 1
 
-        # zamiast resetować filtered_games na pełną listę,
-        # ponownie stosujemy filtr (uwzględnia search + checkbox)
+        # jeśli parsing zwrócił 0 gier – NIE aktualizuj listy
+        if not new_games:
+            return
+
+        # dopiero teraz podmieniamy
+        self.pgn_path = pgn_path
+        self.games = new_games
+        self.filtered_games = list(self.games)
+
         self._apply_filter()
-        # _apply_filter samo zadba o wybór odpowiedniej partii
-        # na podstawie selected_index / current_game_index
+
+        # przywróć ruch / auto-follow
+        if self.current_game and self.move_list:
+            # użytkownik był na końcu STAREJ partii, jeśli jego indeks = stara długość
+            was_at_end = (old_move_index == old_len)
+
+            if was_at_end:
+                # auto-follow → idź na koniec NOWEJ partii
+                self.move_index = len(self.move_list)
+            else:
+                # przywróć poprzedni ruch (w granicach nowej listy)
+                self.move_index = max(0, min(old_move_index, len(self.move_list)))
+
+            self.update_board()
+            self._refresh_pgn_with_highlight()
 
     # ---------------------------------------------------------
     # REPETITION SNAPSHOTS
@@ -450,11 +535,46 @@ class BoardViewerWindow(QMainWindow):
                 self.repetition_snapshots.update(indices)
 
     # ---------------------------------------------------------
+    # CLOCK PARSING
+    # ---------------------------------------------------------
+    def extract_clock(self, comment: str):
+        """
+        Extracts [%clk HH:MM:SS] from a PGN comment.
+        Returns string "HH:MM:SS" or None.
+        """
+        if "[%clk" not in comment:
+            return None
+
+        try:
+            start = comment.index("[%clk") + 6
+            end = comment.index("]", start)
+            return comment[start:end].strip()
+        except Exception:
+            return None
+
+    def extract_emt(self, comment: str):
+        """
+        Extracts [%emt HH:MM:SS] from PGN comment.
+        Returns string "HH:MM:SS" (or "MM:SS"), or None.
+        """
+        if "[%emt" not in comment:
+            return None
+
+        try:
+            start = comment.index("[%emt") + 6
+            end = comment.index("]", start)
+            return comment[start:end].strip()
+        except Exception:
+            return None
+
+    # ---------------------------------------------------------
     # BOARD RENDERING
     # ---------------------------------------------------------
     def update_board(self) -> None:
         if self.current_board is None:
             self.board_label.clear()
+            self.white_clock_label.setText("White: --:--:--")
+            self.black_clock_label.setText("Black: --:--:--")
             return
 
         board = self.current_board.copy()
@@ -508,6 +628,66 @@ class BoardViewerWindow(QMainWindow):
 
         self.board_label.setPixmap(pixmap)
 
+        # --- CLOCK UPDATE ---
+        if self.current_game is None:
+            self.white_clock_label.setText("White: --:--:--")
+            self.black_clock_label.setText("Black: --:--:--")
+            return
+
+        # Jeśli jesteśmy PRZED pierwszym ruchem → reset i KONIEC
+        if self.move_index == 0:
+            self.white_clock_label.setText("White: --:--:--")
+            self.black_clock_label.setText("Black: --:--:--")
+            return
+
+        # Normalny ruch → move_idx wskazuje na wykonany ruch
+        move_idx = self.move_index - 1
+
+        nodes = list(self.current_game.mainline())
+
+        # Jeśli ruch poza zakresem → nic nie rób
+        if not (0 <= move_idx < len(nodes)):
+            return
+
+        node = nodes[move_idx]
+        comment = getattr(node, "comment", "") or ""
+
+        clk = self.extract_clock(comment)
+        emt = self.extract_emt(comment)
+
+        # Kto wykonał ruch?
+        is_white_move = (move_idx % 2 == 0)
+
+        # --- WHITE MOVE ---
+        if is_white_move:
+            if emt is not None:
+                self.white_clock_label.setText(f"White: {clk} (Last move: {emt})")
+            else:
+                self.white_clock_label.setText(f"White: {clk}")
+
+            black_clk = self._last_clk_for_color(nodes, move_idx - 1, is_white=False)
+            black_emt = self._last_emt_for_color(nodes, move_idx - 1, is_white=False)
+
+            if black_emt is not None:
+                self.black_clock_label.setText(f"Black: {black_clk} (Last move: {black_emt}) (on move)")
+            else:
+                self.black_clock_label.setText(f"Black: {black_clk} (on move)")
+
+        # --- BLACK MOVE ---
+        else:
+            if emt is not None:
+                self.black_clock_label.setText(f"Black: {clk} (Last move: {emt})")
+            else:
+                self.black_clock_label.setText(f"Black: {clk}")
+
+            white_clk = self._last_clk_for_color(nodes, move_idx - 1, is_white=True)
+            white_emt = self._last_emt_for_color(nodes, move_idx - 1, is_white=True)
+
+            if white_emt is not None:
+                self.white_clock_label.setText(f"White: {white_clk} (Last move: {white_emt}) (on move)")
+            else:
+                self.white_clock_label.setText(f"White: {white_clk} (on move)")
+
     # ---------------------------------------------------------
     # KEYBOARD CONTROL
     # ---------------------------------------------------------
@@ -526,6 +706,12 @@ class BoardViewerWindow(QMainWindow):
         if key == Qt.Key_End:
             self.go_end()
             return
+        if key == Qt.Key_Up:
+            self.go_prev_game()
+            return
+        if key == Qt.Key_Down:
+            self.go_next_game()
+            return        
 
         super().keyPressEvent(event)
 
@@ -627,3 +813,4 @@ class BoardViewerWindow(QMainWindow):
             return
         last_row = len(self.filtered_games) - 1
         self.load_game_at_index(last_row)
+
