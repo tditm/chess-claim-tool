@@ -56,7 +56,6 @@ elif platform.system() == "Windows":
 if TYPE_CHECKING:
     from src.controllers import ChessClaimController
 
-
 def sources_warning() -> None:
     """Display a warning dialog when no valid PGN sources are found."""
     warning_dialog = QMessageBox()
@@ -65,7 +64,6 @@ def sources_warning() -> None:
     warning_dialog.setText("PGN File(s) Not Found")
     warning_dialog.setInformativeText("Please enter at least one valid PGN source.")
     warning_dialog.exec()
-
 
 class ChessClaimView(QMainWindow):
     """
@@ -76,7 +74,6 @@ class ChessClaimView(QMainWindow):
     - control buttons (scan, stop, board viewer)
     - status bar with sources / download / scan status
     """
-
     ICON_SIZE = 16
     __slots__ = [
         "controller",
@@ -99,6 +96,11 @@ class ChessClaimView(QMainWindow):
         "scoresheet_spin",
         "possible_threefold_action",
         "possible_fiftymove_action",
+        "timecontrol_action",
+        "timecontrol_spin",
+        "low_time_action",
+        "low_time_spin",
+        "flag_fall_action",
     ]
 
     def __init__(self, controller: ChessClaimController) -> None:
@@ -143,6 +145,11 @@ class ChessClaimView(QMainWindow):
         self.scoresheet_spin = None
         self.possible_threefold_action = None
         self.possible_fiftymove_action = None
+        self.timecontrol_action = None
+        self.timecontrol_spin = None
+        self.low_time_action = None
+        self.low_time_spin = None
+        self.flag_fall_action = None
 
     def center(self) -> None:
         """Center the window on the screen."""
@@ -209,7 +216,32 @@ class ChessClaimView(QMainWindow):
         widget_action_scoresheet = QWidgetAction(self)
         widget_action_scoresheet.setDefaultWidget(widget_scoresheet)
         options_menu.addAction(widget_action_scoresheet)
+        
+        # ---------------------------------------------------------
+        # Time control reminder (checkbox + spinbox)
+        # ---------------------------------------------------------
+        widget_timecontrol = QWidget()
+        layout_timecontrol = QHBoxLayout()
+        layout_timecontrol.setContentsMargins(10, 2, 10, 2)
+        layout_timecontrol.setSpacing(0)
 
+        self.timecontrol_action = QCheckBox("Time control reminder after move")
+        self.timecontrol_action.setChecked(False)
+
+        self.timecontrol_spin = QSpinBox()
+        self.timecontrol_spin.setRange(1, 200)
+        self.timecontrol_spin.setValue(38)
+        self.timecontrol_spin.setEnabled(False)
+
+        layout_timecontrol.addWidget(self.timecontrol_action)
+        layout_timecontrol.addWidget(self.timecontrol_spin)
+        layout_timecontrol.addStretch()
+        widget_timecontrol.setLayout(layout_timecontrol)
+
+        widget_action_timecontrol = QWidgetAction(self)
+        widget_action_timecontrol.setDefaultWidget(widget_timecontrol)
+        options_menu.addAction(widget_action_timecontrol)
+        
         # ---------------------------------------------------------
         # Possible Threefold Reminder (checkbox)
         # ---------------------------------------------------------
@@ -246,16 +278,69 @@ class ChessClaimView(QMainWindow):
         widget_action_fifty.setDefaultWidget(widget_fifty)
         options_menu.addAction(widget_action_fifty)
 
+        # ---------------------------------------------------------
+        # Low Time Reminder (checkbox + spinbox)
+        # ---------------------------------------------------------
+        widget_lowtime = QWidget()
+        layout_lowtime = QHBoxLayout()
+        layout_lowtime.setContentsMargins(10, 2, 10, 2)
+        layout_lowtime.setSpacing(0)
+
+        self.low_time_action = QCheckBox("Low time reminder if less seconds than")
+        self.low_time_action.setChecked(False)
+
+        self.low_time_spin = QSpinBox()
+        self.low_time_spin.setRange(1, 600)  # seconds
+        self.low_time_spin.setValue(120)     # default: 2 minutes
+        self.low_time_spin.setEnabled(False)
+
+        layout_lowtime.addWidget(self.low_time_action)
+        layout_lowtime.addWidget(self.low_time_spin)
+        layout_lowtime.addStretch()
+        widget_lowtime.setLayout(layout_lowtime)
+
+        widget_action_lowtime = QWidgetAction(self)
+        widget_action_lowtime.setDefaultWidget(widget_lowtime)
+        options_menu.addAction(widget_action_lowtime)
+
+        # ---------------------------------------------------------
+        # Flag Fall Reminder (checkbox)
+        # ---------------------------------------------------------
+        widget_flagfall = QWidget()
+        layout_flagfall = QHBoxLayout()
+        layout_flagfall.setContentsMargins(10, 2, 10, 2)
+
+        self.flag_fall_action = QCheckBox("Flag fall reminder (00:00:00)")
+        self.flag_fall_action.setChecked(False)
+
+        layout_flagfall.addWidget(self.flag_fall_action)
+        layout_flagfall.addStretch()
+        widget_flagfall.setLayout(layout_flagfall)
+
+        widget_action_flagfall = QWidgetAction(self)
+        widget_action_flagfall.setDefaultWidget(widget_flagfall)
+        options_menu.addAction(widget_action_flagfall)
+
         # Connect to controller
         self.scoresheet_action.stateChanged.connect(self._update_scoresheet_settings)
         self.scoresheet_spin.valueChanged.connect(self._update_scoresheet_settings)
-
+        
+        self.timecontrol_action.stateChanged.connect(self._update_timecontrol_settings)
+        self.timecontrol_spin.valueChanged.connect(self._update_timecontrol_settings)
+        
         self.possible_threefold_action.stateChanged.connect(
             lambda state: setattr(self.controller, "possible_threefold_enabled", state)
         )
 
         self.possible_fiftymove_action.stateChanged.connect(
             lambda state: setattr(self.controller, "possible_fiftymove_enabled", state)
+        )
+
+        self.low_time_action.stateChanged.connect(self._update_low_time_settings)
+        self.low_time_spin.valueChanged.connect(self._update_low_time_settings)
+
+        self.flag_fall_action.stateChanged.connect(
+            lambda state: setattr(self.controller, "flag_fall_reminder_enabled", state)
         )
 
         # ---------------------------------------------------------
@@ -274,7 +359,19 @@ class ChessClaimView(QMainWindow):
 
         self.controller.scoresheet_reminder_enabled = enabled
         self.controller.scoresheet_threshold = self.scoresheet_spin.value()
+        
+    def _update_timecontrol_settings(self) -> None:
+        enabled = self.timecontrol_action.isChecked()
+        self.timecontrol_spin.setEnabled(enabled)
+        self.controller.timecontrol_reminder_enabled = enabled
+        self.controller.timecontrol_threshold = self.timecontrol_spin.value()
 
+    def _update_low_time_settings(self):
+        enabled = self.low_time_action.isChecked()
+        self.low_time_spin.setEnabled(enabled)
+        self.controller.low_time_reminder_enabled = enabled
+        self.controller.low_time_threshold_seconds = self.low_time_spin.value()
+       
     def create_claims_table(self) -> None:
         """Create and configure the claims table."""
         from PyQt5.QtWidgets import QHeaderView
@@ -361,6 +458,9 @@ class ChessClaimView(QMainWindow):
         board_number = entry.board_number
         players = entry.players
         move = entry.move
+
+        # store game_index for safe row removal
+        self.current_entry_game_index = entry.game_index
 
         # Remove previous rows for same players and claim type (or weaker claim)
         self.remove_rows_by_claim_type(claim_type, players)
@@ -470,22 +570,23 @@ class ChessClaimView(QMainWindow):
     def remove_rows_by_claim_type(self, claim_type: str, players: str) -> None:
         """
         Remove previous rows for the same players and same or weaker claim type.
+        Uses game_index instead of players string to avoid mismatches.
         """
         model = self.claims_table_model
         rows_to_remove = []
 
         for row in range(model.rowCount()):
             model_type = model.item(row, 2).text()
-            model_players = model.item(row, 4).text()
 
-            if model_type == claim_type and model_players == players:
+            data = model.item(row, 0).data(Qt.UserRole)
+            model_game_index = data.get("game_index") if data else None
+
+            if model_type == claim_type and model_game_index == self.current_entry_game_index:
                 rows_to_remove.append(row)
 
-        # Remove rows from bottom to top
         for row in reversed(rows_to_remove):
             model.removeRow(row)
 
-        # Renumber rows (fixes viewer bug!)
         for i in range(model.rowCount()):
             model.item(i, 0).setText(str(i + 1))
 
@@ -716,12 +817,12 @@ class AboutDialog(QDialog):
         appname.setObjectName("appname")
         appname.setAlignment(Qt.AlignCenter)
 
-        version = QLabel("Version 0.4.1")
+        version = QLabel("Version 0.4.2")
         version.setObjectName("version")
         version.setAlignment(Qt.AlignCenter)
 
         copyright = QLabel(
-            "Author Serntedakis Athanasios 2022 © Modified by Tomasz Delega 2026 ©"
+            "Author Serntedakis Athanasios 2022 © Modified by Tomek Delega 2026 ©"
         )
         copyright.setObjectName("copyright")
         copyright.setAlignment(Qt.AlignCenter)
