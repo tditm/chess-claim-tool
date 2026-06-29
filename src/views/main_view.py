@@ -824,7 +824,7 @@ class AboutDialog(QDialog):
         appname.setObjectName("appname")
         appname.setAlignment(Qt.AlignCenter)
 
-        version = QLabel("Version 0.4.3 beta")
+        version = QLabel("Version 0.4.3")
         version.setObjectName("version")
         version.setAlignment(Qt.AlignCenter)
 
