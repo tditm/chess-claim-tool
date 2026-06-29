@@ -61,7 +61,7 @@ class ClaimEntry:
     move_counter: int          # final move index (claim moment)
     start_move_counter: int    # starting move index
     comment: str = ""          # NEW — PGN comment (e.g. "First counting move: X")
-
+    game_id: str = ""
 
 class Claims:
     """
@@ -69,9 +69,19 @@ class Claims:
     Stores unique entries and prevents duplicates.
     """
 
-    def __init__(self):
+class Claims:
+    def __init__(self, controller):
+        self.controller = controller
+
+        # partie, których nie sprawdzamy
         self.dont_check: set[str] = set()
+
+        # wszystkie wykryte wpisy
         self.entries: set[ClaimEntry] = set()
+
+        # zestaw pozycji, aby uniknąć duplikatów 3-fold
+        # klucz: (ClaimType, game_id, move_counter, fen)
+        self.seen_positions: set[tuple] = set()
 
     def check_game(self, game: Game, game_index: int) -> set[ClaimEntry]:
         """
@@ -82,6 +92,9 @@ class Claims:
         board = game.board()
         players = get_players(game)
         board_number = self.get_board_number(game)
+
+        # NEW — stable game identifier
+        gid = self.controller.make_game_id(game)
 
         new_entries: set[ClaimEntry] = set()
 
@@ -104,7 +117,8 @@ class Claims:
                 entry = ClaimEntry(
                     ClaimType.FIVEFOLD, board_number, players,
                     printable_move, game_index, move_counter, last_irreversible_move,
-                    ""   # no comment
+                    "",   # no comment
+                    gid   # NEW
                 )
                 new_entries.add(entry)
                 self.dont_check.add(players)
@@ -115,7 +129,8 @@ class Claims:
                 entry = ClaimEntry(
                     ClaimType.SEVENTYFIVE_MOVES, board_number, players,
                     printable_move, game_index, move_counter, last_irreversible_move,
-                    ""   # no comment
+                    "",   # no comment
+                    gid   # NEW
                 )
                 new_entries.add(entry)
                 self.dont_check.add(players)
@@ -127,16 +142,24 @@ class Claims:
                 new_entries.add(ClaimEntry(
                     ClaimType.FIFTY_MOVES, board_number, players,
                     printable_move, game_index, move_counter, last_irreversible_move,
-                    comment
+                    comment,
+                    gid   # NEW
                 ))
 
             # 3-fold repetition → NO COMMENT
             if board.is_repetition(count=3):
-                new_entries.add(ClaimEntry(
-                    ClaimType.THREEFOLD, board_number, players,
-                    printable_move, game_index, move_counter, last_irreversible_move,
-                    ""   # no comment
-                ))
+                fen = board.fen()
+                key = (ClaimType.THREEFOLD, gid, move_counter, fen)
+
+                if key not in self.seen_positions:
+                    entry = ClaimEntry(
+                        ClaimType.THREEFOLD, board_number, players,
+                        printable_move, game_index, move_counter, last_irreversible_move,
+                        "",   # no comment
+                        gid
+                    )
+                    new_entries.add(entry)
+                    self.seen_positions.add(key)
 
         # Remove duplicates compared to previous runs
         unique_entries = new_entries.difference(self.entries)
