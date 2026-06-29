@@ -23,12 +23,11 @@ from urllib.error import HTTPError, URLError
 import certifi
 import time
 
-
 # Stały nagłówek udający normalną przeglądarkę
 BROWSER_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+    "X-Client": "ChessClaimTool/0.4.3"
 }
-
 
 def download_pgn(url: str, timeout=30) -> bytes:
     """
