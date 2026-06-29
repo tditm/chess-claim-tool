@@ -25,7 +25,7 @@ from threading import Event, Thread, Lock
 from typing import List, Dict
 
 from PyQt5.QtCore import QThreadPool
-from PyQt5.QtWidgets import QApplication, QWidget, QHBoxLayout, QLabel, QCheckBox, QSpinBox, QWidgetAction, QAction
+from PyQt5.QtWidgets import QApplication
 
 from src.helpers import get_appdata_path, Status
 from src.models.claims import Claims, ClaimEntry, ClaimType
@@ -33,7 +33,7 @@ from src.models.workers import CheckDownload, DownloadGames, MakePgn, Scan, Stop
 from src.views.dialog_view import AddSourceDialog, SourceHBox
 from src.views.main_view import ChessClaimView, sources_warning
 from src.board_viewer import BoardViewerWindow
-
+from src.models.claims import get_players
 
 class ChessClaimController(QApplication):
 
@@ -43,16 +43,27 @@ class ChessClaimController(QApplication):
         'stop_event', 'board_viewer',
         'scoresheet_reminder_enabled', 'scoresheet_threshold',
         'scoresheet_reminder_fired',
+        'timecontrol_reminder_enabled', 'timecontrol_threshold',
+        'timecontrol_reminder_fired',
         'possible_threefold_enabled', 'possible_fiftymove_enabled',
-        'threefold_fired', 'fiftymove_fired'
+        'threefold_fired', 'fiftymove_fired',
+        'games',
+        'claims',
+        'low_time_reminder_enabled',
+        'low_time_threshold_seconds',
+        'low_time_reminder_fired',
+        'flag_fall_reminder_enabled',
+        'flag_fall_reminder_fired',
     ]
 
     def __init__(self) -> None:
         super().__init__(sys.argv)
 
         self.view = ChessClaimView(self)
-        self.model = Claims()
+        self.model = Claims(self)
+        self.claims = Claims(self)
         self.sources_dialog = None
+        self.current_viewed_gid = None
 
         self.make_pgn_worker = None
         self.download_worker = None
@@ -67,19 +78,65 @@ class ChessClaimController(QApplication):
         self.scoresheet_threshold = 55
         self.scoresheet_reminder_fired: Dict[int, bool] = {}
 
+        # Timecontrol reminder
+        self.timecontrol_reminder_enabled = False
+        self.timecontrol_threshold = 40
+        self.timecontrol_reminder_fired = {}
+
+        # Low time reminder
+        self.low_time_reminder_enabled = False
+        self.low_time_threshold_seconds = 120  # np. 2 min
+        self.low_time_reminder_fired = {}
+
+        # Flag fall reminder
+        self.flag_fall_reminder_enabled = False
+        self.flag_fall_reminder_fired = {}
+
         # Possible reminders
         self.possible_threefold_enabled = False
         self.possible_fiftymove_enabled = False
+        self.shown_reminders = set()
 
         self.threefold_fired: Dict[int, bool] = {}
         self.fiftymove_fired: Dict[int, bool] = {}
 
+        # Wspólna lista gier
+        self.games: List = []
+
+    def make_game_id(self, game):
+        """
+        Generates a stable identifier for a game based on PGN headers.
+        This ID does NOT change even if the PGN file is rebuilt or reordered.
+        """
+        return "|".join([
+            game.headers.get("Event", ""),
+            game.headers.get("Site", ""),
+            game.headers.get("Date", ""),
+            game.headers.get("Round", ""),
+            game.headers.get("White", ""),
+            game.headers.get("Black", ""),
+        ])
+
+    # ---------------------------------------------------------
+    # START
+    # ---------------------------------------------------------
     def do_start(self) -> None:
         app_path = get_appdata_path()
         os.makedirs(app_path, exist_ok=True)
 
         self.view.set_gui()
         self.view.show()
+
+    def extract_clock_from_node(self, node):
+        import re
+
+        if not node or not node.comment:
+            return None
+
+        match = re.search(r"\[%clk\s+(\d{1,2}:\d{2}:\d{2})\]", node.comment)
+        if match:
+            return match.group(1)
+        return None
 
     # ---------------------------------------------------------
     # ABOUT
@@ -90,32 +147,57 @@ class ChessClaimController(QApplication):
     # ---------------------------------------------------------
     # BOARD VIEWER
     # ---------------------------------------------------------
-    def on_board_viewer_clicked(self) -> None:
+    def on_board_viewer_clicked(self):
+        """
+        Opens the Board Viewer and jumps to the correct game
+        based on the selected claim entry.
+        """
         app_path = get_appdata_path()
         pgn_path = os.path.join(app_path, "games.pgn")
 
-        if not os.path.exists(pgn_path):
-            return
-
+        # Create viewer if needed
         if self.board_viewer is None:
-            self.board_viewer = BoardViewerWindow(pgn_path=pgn_path)
-        else:
-            if hasattr(self.board_viewer, "reload_pgn"):
-                self.board_viewer.reload_pgn(pgn_path)
-                self.board_viewer.go_end()
+            self.board_viewer = BoardViewerWindow(pgn_path)
+
+        index = self.view.claims_table.currentIndex()
+        if index.isValid():
+            data = index.data(Qt.UserRole)
+            if data:
+                gid = data.get("game_id", "")
+                game_index = data.get("game_index", 0)
+
+                # jeśli to ta sama partia → NIE przełączaj
+                if gid and gid == self.current_viewed_gid:
+                    self.board_viewer.show()
+                    return
+
+                # jeśli inna partia → przełącz
+                idx = self.game_id_to_index.get(gid, game_index)
+                self.current_viewed_gid = gid
+                self.board_viewer.load_game_at_index(idx)
 
         self.board_viewer.show()
-        self.board_viewer.raise_()
 
     def open_viewer_for_claim(self, game_index: int, move_index: int):
+        """
+        Otwiera Board Viewer i przechodzi do konkretnego ruchu
+        (używane przy kliknięciu w wiersz tabeli).
+        """
+        app_path = get_appdata_path()
+        pgn_path = os.path.join(app_path, "games.pgn")
+
         if self.board_viewer is None:
-            self.on_board_viewer_clicked()
+            self.board_viewer = BoardViewerWindow(pgn_path)
         else:
             self.on_pgn_updated()
 
         try:
             self.board_viewer.load_game_at_index(game_index)
             self.board_viewer.jump_to_move(move_index)
+
+            # ❌ NIE USTAWIAMY current_viewed_gid TUTAJ
+            # To powodowało przeskakiwanie
+
         except Exception:
             return
 
@@ -126,15 +208,42 @@ class ChessClaimController(QApplication):
     # PGN UPDATE
     # ---------------------------------------------------------
     def on_pgn_updated(self):
-        if self.board_viewer is None:
-            return
-
         app_path = get_appdata_path()
         pgn_path = os.path.join(app_path, "games.pgn")
 
-        if hasattr(self.board_viewer, "reload_pgn"):
+        if not os.path.exists(pgn_path):
+            return
+
+        import chess.pgn
+        self.games = []
+        with open(pgn_path, "r", encoding="utf-8") as f:
+            while True:
+                g = chess.pgn.read_game(f)
+                if not g:
+                    break
+                self.games.append(g)
+
+        # NEW — rebuild stable mapping game_id → current index
+        self.game_id_to_index = {}
+        for idx, game in enumerate(self.games):
+            gid = self.make_game_id(game)
+            self.game_id_to_index[gid] = idx
+
+        # Reload viewer if open
+        if self.board_viewer is not None:
             self.board_viewer.reload_pgn(pgn_path)
-            self.board_viewer.go_end()
+            # self.board_viewer.go_end()   # ← zostawiasz jak było
+
+        # Re-run reminders
+        self.check_scoresheet_reminders()
+        self.check_timecontrol_reminders()
+        self.check_possible_threefold()
+        self.check_possible_fiftymove()
+        self.check_low_time_reminder()
+        self.check_flag_fall_reminder()
+
+        # Refresh table
+        self.view.refresh_table()
 
     # ---------------------------------------------------------
     # NEW MOVE
@@ -156,6 +265,9 @@ class ChessClaimController(QApplication):
         self.check_scoresheet_reminders()
         self.check_possible_threefold()
         self.check_possible_fiftymove()
+        self.check_timecontrol_reminders()
+        self.check_low_time_reminder()
+        self.check_flag_fall_reminder()        
 
     # ---------------------------------------------------------
     # SCORESHEET REMINDER
@@ -164,177 +276,264 @@ class ChessClaimController(QApplication):
         if not self.scoresheet_reminder_enabled:
             return
 
-        app_path = get_appdata_path()
-        pgn_path = os.path.join(app_path, "games.pgn")
-
-        if not os.path.exists(pgn_path):
+        if not self.games:
             return
 
-        import chess.pgn
-        games = []
-        with open(pgn_path, "r", encoding="utf-8") as f:
-            while True:
-                game = chess.pgn.read_game(f)
-                if game is None:
-                    break
-                games.append(game)
+        for idx, game in enumerate(self.games, start=1):
 
-        for idx, game in enumerate(games, start=1):
             result = game.headers.get("Result", "").strip()
-
             if result in ("1-0", "0-1", "1/2-1/2", "½-½"):
                 continue
 
-            move_count = len(list(game.mainline_moves()))
+            move_count = len(list(game.mainline_moves())) // 2
             already = self.scoresheet_reminder_fired.get(idx, False)
 
             if not already and move_count >= self.scoresheet_threshold:
                 self.scoresheet_reminder_fired[idx] = True
 
-                try:
-                    from plyer import notification
-                    notification.notify(
-                        title="Scoresheet reminder",
-                        message=f"Game {idx}: {move_count} moves reached.",
-                        timeout=5
-                    )
-                except Exception:
-                    pass
+                board_number = self.claims.get_board_number(game)
+                gid = self.make_game_id(game)
 
                 entry = ClaimEntry(
-                    type=ClaimType.FIVEFOLD,
-                    board_number=str(idx),
-                    players=f"Game {idx}",
-                    move=f"{move_count} moves reached",
+                    type=ClaimType.SCORESHEET_REMINDER,
+                    board_number=board_number,
+                    players=get_players(game),
+                    move=f"{self.scoresheet_threshold}-move game",
                     game_index=idx - 1,
                     move_counter=move_count,
-                    start_move_counter=0
+                    start_move_counter=0,
+                    game_id=gid,
                 )
                 self.view.add_item_to_table(entry)
 
     # ---------------------------------------------------------
-    # POSSIBLE THREEFOLD REMINDER
+    # TIME CONTROL REMINDER
+    # ---------------------------------------------------------
+    def check_timecontrol_reminders(self):
+        if not self.timecontrol_reminder_enabled:
+            return
+
+        if not self.games:
+            return
+
+        for idx, game in enumerate(self.games, start=1):
+
+            result = game.headers.get("Result", "").strip()
+            if result in ("1-0", "0-1", "1/2-1/2", "½-½"):
+                continue
+
+            move_count = len(list(game.mainline_moves())) // 2
+            already = self.timecontrol_reminder_fired.get(idx, False)
+
+            if not already and move_count >= self.timecontrol_threshold:
+                self.timecontrol_reminder_fired[idx] = True
+
+                board_number = self.claims.get_board_number(game)
+                gid = self.make_game_id(game)
+
+                entry = ClaimEntry(
+                    type=ClaimType.TIMECONTROL_REMINDER,
+                    board_number=board_number,
+                    players=get_players(game),
+                    move=f"{self.timecontrol_threshold}-move game",
+                    game_index=idx - 1,
+                    move_counter=move_count,
+                    start_move_counter=0,
+                    game_id=gid,
+                )
+                self.view.add_item_to_table(entry)
+
+    # ---------------------------------------------------------
+    # TWO-FOLD
     # ---------------------------------------------------------
     def check_possible_threefold(self):
         if not self.possible_threefold_enabled:
             return
 
-        app_path = get_appdata_path()
-        pgn_path = os.path.join(app_path, "games.pgn")
-        if not os.path.exists(pgn_path):
+        if not self.games:
             return
 
-        import chess.pgn
-        games = []
-        with open(pgn_path, "r", encoding="utf-8") as f:
-            while True:
-                g = chess.pgn.read_game(f)
-                if not g:
-                    break
-                games.append(g)
+        import chess
 
-        for idx, game in enumerate(games, start=1):
-            if self.threefold_fired.get(idx, False):
-                continue
+        for idx, game in enumerate(self.games, start=1):
 
             board = game.board()
             positions = {}
 
+            start_fen = " ".join(board.fen().split(" ")[:4])
+            positions[start_fen] = 1
+
             for move in game.mainline_moves():
                 board.push(move)
-                fen = board.fen()
 
+                fen = " ".join(board.fen().split(" ")[:4])
                 positions[fen] = positions.get(fen, 0) + 1
 
                 if positions[fen] == 2:
-                    self.threefold_fired[idx] = True
 
-                    entry = ClaimEntry(
-                        type=ClaimType.FIVEFOLD,
-                        board_number=str(idx),
-                        players=f"Game {idx}",
-                        move="Possible threefold repetition",
-                        game_index=idx - 1,
-                        move_counter=len(list(game.mainline_moves())),
-                        start_move_counter=0
-                    )
-                    self.view.add_item_to_table(entry)
+                    key = ("twofold", idx, fen)
 
-                    try:
-                        from plyer import notification
-                        notification.notify(
-                            title="Possible threefold repetition",
-                            message=f"Game {idx}: position repeated twice.",
-                            timeout=5
+                    if key not in self.shown_reminders:
+                        self.shown_reminders.add(key)
+
+                        board_number = self.claims.get_board_number(game)
+                        gid = self.make_game_id(game)
+
+                        entry = ClaimEntry(
+                            type=ClaimType.TWO_FOLD_WARNING,
+                            board_number=board_number,
+                            players=get_players(game),
+                            move="near 3-fold repetition",
+                            game_index=idx - 1,
+                            move_counter=len(list(game.mainline_moves())),
+                            start_move_counter=0,
+                            game_id=gid,
                         )
-                    except:
-                        pass
-
-                    break
+                        self.view.add_item_to_table(entry)
 
     # ---------------------------------------------------------
-    # POSSIBLE 50-MOVE REMINDER
+    # 45-MOVE
     # ---------------------------------------------------------
     def check_possible_fiftymove(self):
         if not self.possible_fiftymove_enabled:
             return
 
-        app_path = get_appdata_path()
-        pgn_path = os.path.join(app_path, "games.pgn")
-        if not os.path.exists(pgn_path):
+        if not self.games:
             return
 
-        import chess.pgn
-        games = []
-        with open(pgn_path, "r", encoding="utf-8") as f:
-            while True:
-                g = chess.pgn.read_game(f)
-                if not g:
-                    break
-                games.append(g)
+        import chess
 
-        for idx, game in enumerate(games, start=1):
-            if self.fiftymove_fired.get(idx, False):
-                continue
+        for idx, game in enumerate(self.games, start=1):
 
             board = game.board()
             halfmove_clock = 0
 
             for move in game.mainline_moves():
-                piece = board.piece_at(move.from_square)
 
-                if board.is_capture(move) or (piece and piece.piece_type == 1):
+                piece = board.piece_at(move.from_square)
+                if board.is_capture(move) or (piece and piece.piece_type == chess.PAWN):
                     halfmove_clock = 0
                 else:
                     halfmove_clock += 1
 
                 board.push(move)
 
-                if halfmove_clock == 90:
-                    self.fiftymove_fired[idx] = True
+                if halfmove_clock >= 90:
 
-                    entry = ClaimEntry(
-                        type=ClaimType.FIVEFIVEFOLD,
-                        board_number=str(idx),
-                        players=f"Game {idx}",
-                        move="Possible 50-move rule approaching",
-                        game_index=idx - 1,
-                        move_counter=len(list(game.mainline_moves())),
-                        start_move_counter=0
-                    )
-                    self.view.add_item_to_table(entry)
+                    key = ("fiftymove", idx, halfmove_clock)
 
-                    try:
-                        from plyer import notification
-                        notification.notify(
-                            title="Possible 50-move rule",
-                            message=f"Game {idx}: 45 moves without capture or pawn move.",
-                            timeout=5
+                    if key not in self.shown_reminders:
+                        self.shown_reminders.add(key)
+
+                        board_number = self.claims.get_board_number(game)
+                        gid = self.make_game_id(game)
+
+                        entry = ClaimEntry(
+                            type=ClaimType.FORTYFIVE_MOVES_WARNING,
+                            board_number=board_number,
+                            players=get_players(game),
+                            move="near 50-move rule",
+                            game_index=idx - 1,
+                            move_counter=len(list(game.mainline_moves())),
+                            start_move_counter=0,
+                            game_id=gid,
                         )
-                    except:
-                        pass
+                        self.view.add_item_to_table(entry)
 
-                    break
+    # ---------------------------------------------------------
+    # LOW TIME REMINDER
+    # ---------------------------------------------------------
+
+    def check_low_time_reminder(self):
+        if not self.low_time_reminder_enabled:
+            return
+
+        if not self.games:
+            return
+
+        for idx, game in enumerate(self.games, start=1):
+
+            node = game.end()
+            clk = None
+
+            while node is not None and clk is None:
+                clk = self.extract_clock_from_node(node)
+                node = node.parent
+
+            if not clk:
+                continue
+
+            try:
+                h, m, s = map(int, clk.split(":"))
+            except ValueError:
+                continue
+
+            total_seconds = h * 3600 + m * 60 + s
+            already = self.low_time_reminder_fired.get(idx, False)
+
+            if not already and total_seconds <= self.low_time_threshold_seconds:
+                self.low_time_reminder_fired[idx] = True
+
+                board_number = self.claims.get_board_number(game)
+                gid = self.make_game_id(game)
+
+                entry = ClaimEntry(
+                    type=ClaimType.LOW_TIME_REMINDER,
+                    board_number=board_number,
+                    players=get_players(game),
+                    move=f"Low time: {clk}",
+                    game_index=idx - 1,
+                    move_counter=len(list(game.mainline_moves())),
+                    start_move_counter=0,
+                    game_id=gid,
+                )
+                self.view.add_item_to_table(entry)
+
+    # ---------------------------------------------------------
+    # FLAG FALL REMINDER
+    # ---------------------------------------------------------
+
+    def check_flag_fall_reminder(self):
+        if not self.flag_fall_reminder_enabled:
+            return
+
+        if not self.games:
+            return
+
+        for idx, game in enumerate(self.games, start=1):
+
+            node = game.end()
+            clk = None
+
+            while node is not None and clk is None:
+                clk = self.extract_clock_from_node(node)
+                node = node.parent
+
+            if not clk:
+                continue
+
+            if clk not in ("00:00:00", "00:00", "0:00"):
+                continue
+
+            already = self.flag_fall_reminder_fired.get(idx, False)
+
+            if not already:
+                self.flag_fall_reminder_fired[idx] = True
+
+                board_number = self.claims.get_board_number(game)
+                gid = self.make_game_id(game)
+
+                entry = ClaimEntry(
+                    type=ClaimType.FLAG_FALL_REMINDER,
+                    board_number=board_number,
+                    players=get_players(game),
+                    move="Flag fall",
+                    game_index=idx - 1,
+                    move_counter=len(list(game.mainline_moves())),
+                    start_move_counter=0,
+                    game_id=gid,
+                )
+                self.view.add_item_to_table(entry)
 
     # ---------------------------------------------------------
     # SCAN / DOWNLOAD / STOP
@@ -385,6 +584,7 @@ class ChessClaimController(QApplication):
         self.stop_worker.disable_signal.connect(self.on_stop_disable_status)
         self.stop_worker.start()
         self.stop_worker.wait()
+        self.view.change_scan_button_text(Status.STOP)
 
         self.model.empty_dont_check()
         self.model.empty_entries()
@@ -437,7 +637,7 @@ class ChessClaimController(QApplication):
             self.model,
             filename,
             lock,
-            None,              # Live PGN removed
+            None,
             self.stop_event
         )
 
@@ -446,6 +646,8 @@ class ChessClaimController(QApplication):
 
         if hasattr(self.scan_worker, "new_move_signal"):
             self.scan_worker.new_move_signal.connect(self.on_new_move)
+
+        self.scan_worker.finished.connect(self.on_new_move)
 
         self.scan_worker.start()
 
@@ -463,6 +665,7 @@ class SourceDialogController:
         self.filepaths: List[str] = []
         self.downloads: Dict[str, str] = dict()
         self.apply_lock = Lock()
+        self.shown_reminders = set()
 
     def do_start(self) -> None:
         self.view.set_gui()
