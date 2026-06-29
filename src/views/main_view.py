@@ -103,6 +103,11 @@ class ChessClaimView(QMainWindow):
         "flag_fall_action",
     ]
 
+    def refresh_table(self):
+        # TODO: implement table refresh logic
+        # For now, avoid crashes:
+        pass
+
     def __init__(self, controller: ChessClaimController) -> None:
         super().__init__()
         self.controller = controller
@@ -493,6 +498,7 @@ class ChessClaimView(QMainWindow):
                 "game_index": entry.game_index,
                 "move_index": entry.move_counter,
                 "start_move_index": entry.start_move_counter,
+                "game_id": entry.game_id,
             },
             Qt.UserRole,
         )
@@ -502,6 +508,7 @@ class ChessClaimView(QMainWindow):
 
         # Desktop notification
         self.notify(claim_type, players, move)
+        self.claims_table.clearSelection()
 
     @staticmethod
     def create_standard_item(item: str, idx: int) -> QStandardItem:
@@ -817,7 +824,7 @@ class AboutDialog(QDialog):
         appname.setObjectName("appname")
         appname.setAlignment(Qt.AlignCenter)
 
-        version = QLabel("Version 0.4.2")
+        version = QLabel("Version 0.4.3 beta")
         version.setObjectName("version")
         version.setAlignment(Qt.AlignCenter)
 
