@@ -813,4 +813,3 @@ class BoardViewerWindow(QMainWindow):
             return
         last_row = len(self.filtered_games) - 1
         self.load_game_at_index(last_row)
-
