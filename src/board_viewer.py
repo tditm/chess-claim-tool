@@ -357,7 +357,7 @@ class BoardViewerWindow(QMainWindow):
         self.game_list.setVisible(True)
 
     # ---------------------------------------------------------
-    # PGN HTML
+    # PGN HTML (Wersja sędziowska z numeracją powiązanych pozycji)
     # ---------------------------------------------------------
     def build_pgn_html(self, game, highlight_index=None) -> str:
         board = game.board()
@@ -365,6 +365,19 @@ class BoardViewerWindow(QMainWindow):
 
         white = game.headers.get("White", "White")
         black = game.headers.get("Black", "Black")
+
+        # Generujemy aktualną mapę powtórzeń na podstawie logiki wybranej powyżej
+        # Sortujemy indeksy chronologicznie, aby poprawnie ponumerować powtórzenia (1, 2, 3...)
+        sorted_rep_indices = sorted(list(self.repetition_snapshots))
+        total_reps = len(sorted_rep_indices)
+        
+        # Ustalamy właściwą nazwę główną (3-fold lub 5-fold) na podstawie faktycznej liczby powtórzeń
+        if total_reps >= 5:
+            base_label = "5-fold"
+        elif total_reps >= 3:
+            base_label = "3-fold"
+        else:
+            base_label = None
 
         html_parts = []
         html_parts.append(
@@ -383,15 +396,21 @@ class BoardViewerWindow(QMainWindow):
                 f'<span style="font-weight:bold; color:#333;">[{move_number}]</span> '
             )
 
-            # White move
+            # --- Ruch Białych (White Move) ---
             white_move = moves[i]
             white_san = board.san(white_move)
             board.push(white_move)
 
             flags = []
-            if board.is_repetition(3):
-                flags.append("three fold")
-            if board.halfmove_clock >= 100:
+            # 1. Obsługa powtórzeń pozycji (Zawsze jako pierwsza flaga)
+            if base_label and ply_index in sorted_rep_indices:
+                rep_number = sorted_rep_indices.index(ply_index) + 1
+                flags.append(f"{base_label} {rep_number}/{total_reps} WHITE")
+            
+            # 2. Obsługa liczników ruchów (Poprawione wcięcia - niezależne od powtórzeń!)
+            if board.halfmove_clock >= 150:
+                flags.append("75-move rule")
+            elif board.halfmove_clock >= 100:
                 flags.append("50-move rule")
 
             flag_text = ""
@@ -414,16 +433,22 @@ class BoardViewerWindow(QMainWindow):
             ply_index += 1
             i += 1
 
-            # Black move
+            # --- Ruch Czarnych (Black Move) ---
             if i < len(moves):
                 black_move = moves[i]
                 black_san = board.san(black_move)
                 board.push(black_move)
 
                 flags = []
-                if board.is_repetition(3):
-                    flags.append("three fold")
-                if board.halfmove_clock >= 100:
+                # 1. Obsługa powtórzeń pozycji
+                if base_label and ply_index in sorted_rep_indices:
+                    rep_number = sorted_rep_indices.index(ply_index) + 1
+                    flags.append(f"{base_label} {rep_number}/{total_reps} BLACK")
+                
+                # 2. Obsługa liczników ruchów (Niezależne od powtórzeń)
+                if board.halfmove_clock >= 150:
+                    flags.append("75-move rule")
+                elif board.halfmove_clock >= 100:
                     flags.append("50-move rule")
 
                 flag_text = ""
@@ -517,22 +542,41 @@ class BoardViewerWindow(QMainWindow):
             self._refresh_pgn_with_highlight()
 
     # ---------------------------------------------------------
-    # REPETITION SNAPSHOTS
+    # REPETITION SNAPSHOTS (Wersja sędziowska: tylko kluczowa sekwencja)
     # ---------------------------------------------------------
     def _compute_repetition_snapshots(self):
         self.repetition_snapshots = set()
+        if not self.move_list:
+            return
 
         board = chess.Board()
-        key_map = {}
+        key_map = {}  # mapa: {klucz_pozycji: [lista_indeksów_ply]}
 
+        # Symulacja partii i mapowanie identycznych pozycji
         for idx, move in enumerate(self.move_list):
             board.push(move)
             key = board._transposition_key()
             key_map.setdefault(key, []).append(idx)
 
+        # Szukamy grupy powtórzeń o najwyższym priorytecie (5-fold, potem 3-fold)
+        # W przypadku remisu bierzemy tę pozycję, której ostatnie powtórzenie było najpóźniej w partii
+        chosen_indices = []
+        max_reps = 0
+        latest_ply = -1
+
         for key, indices in key_map.items():
-            if len(indices) >= 3:
-                self.repetition_snapshots.update(indices)
+            reps_count = len(indices)
+            if reps_count >= 3:
+                last_idx_in_group = indices[-1]
+                # Warunek wyboru: wyższa krotność powtórzenia LUB ta sama krotność, ale występująca później
+                if reps_count > max_reps or (reps_count == max_reps and last_idx_in_group > latest_ply):
+                    max_reps = reps_count
+                    chosen_indices = indices
+                    latest_ply = last_idx_in_group
+
+        # Jeśli znaleźliśmy sekwencję sędziowską (min. 3 powtórzenia), zapisujemy ją dla zielonej ramki
+        if chosen_indices:
+            self.repetition_snapshots = set(chosen_indices)
 
     # ---------------------------------------------------------
     # CLOCK PARSING
