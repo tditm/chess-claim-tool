@@ -29,7 +29,9 @@ The tool uses the [python-chess](https://github.com/niklasf/python-chess) extern
 
 This version is compatible with the macOS and Windows.
 
-**Download installation packages** of the oryginal version [https://github.com/Dedekind125/chess-claim-tool/releases](https://github.com/Dedekind125/chess-claim-tool/releases)
+https://github.com/tditm/chess-claim-tool/releases
+
+**Download installation packages** of the oryginal version [https://github.com/tditm/chess-claim-tool/releases](https://github.com/iditm/chess-claim-tool/releases)
 
 **DOWNLOAD PORTABLE VERSION OF THE FORK** for Windows https://github.com/tditm/chess-claim-tool/releases
 
