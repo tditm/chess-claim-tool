@@ -31,7 +31,7 @@ This version is compatible with the macOS and Windows.
 
 https://github.com/tditm/chess-claim-tool/releases
 
-**Download installation packages** of the oryginal version [https://github.com/tditm/chess-claim-tool/releases](https://github.com/iditm/chess-claim-tool/releases)
+**Download installation packages** of the oryginal version https://github.com/dedekind125/chess-claim-tool/releases
 
 **DOWNLOAD PORTABLE VERSION OF THE FORK** for Windows https://github.com/tditm/chess-claim-tool/releases
 
