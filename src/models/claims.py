@@ -45,6 +45,7 @@ class ClaimType(Enum):
     TIMECONTROL_REMINDER = "Time control reminder"
     LOW_TIME_REMINDER = "Low time reminder"
     FLAG_FALL_REMINDER = "Flag fall reminder"
+    SOFIA_RULE = "Sofia rule violation"
     
 @dataclass(frozen=True)
 class ClaimEntry:
@@ -73,14 +74,14 @@ class Claims:
     def __init__(self, controller):
         self.controller = controller
 
-        # partie, których nie sprawdzamy
+        # Games that are not being checked
         self.dont_check: set[str] = set()
 
-        # wszystkie wykryte wpisy
+        # All detected entries
         self.entries: set[ClaimEntry] = set()
 
-        # zestaw pozycji, aby uniknąć duplikatów 3-fold
-        # klucz: (ClaimType, game_id, move_counter, fen)
+        # Set of positions to avoid 3-fold duplicates
+        # key: (ClaimType, game_id, move_counter, fen)
         self.seen_positions: set[tuple] = set()
 
     def check_game(self, game: Game, game_index: int) -> set[ClaimEntry]:
