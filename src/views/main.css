@@ -18,9 +18,9 @@ You should have received a copy of the GNU General Public License
 along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-/* ===========================
+/* ============================================================================
    GLOBAL LIGHT THEME
-   =========================== */
+   ============================================================================ */
 
 * {
     background-color: #ffffff;
@@ -28,36 +28,52 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
     font-family: "Segoe UI", sans-serif;
 }
 
-/* ===========================
-   MENU BAR (Options / Help)
-   =========================== */
+/* ============================================================================
+   MENU BAR (Forced to the left with half the spacing between items)
+   ============================================================================ */
 
 QMenuBar {
-    background-color: #f2f2f2;      /* jasnoszare tło */
-    color: #333;
+    background-color: #f8f9fa;        
+    color: #1e293b;                   
+    border-bottom: 2px solid #e2e8f0; 
+    font-weight: 600;                 
+    padding: 2px 0px; 
+    margin: 0px;
+    spacing: 0px; 
 }
 
 QMenuBar::item {
     background-color: transparent;
-    padding: 4px 10px;
+    padding: 6px 10px;                /* Reduced horizontal padding from 14px to 10px to bridge the gap */
+    border-radius: 4px;               
+    margin: 2px 0px 2px 0px;          /* Halved the right margin from 4px to 2px for tighter spacing */
 }
 
 QMenuBar::item:selected {
-    background-color: #e0e0e0;      /* lekko ciemniejsze szare */
+    background-color: #e2e8f0;        
+    color: #0f172a;                   
 }
 
 QMenu {
     background-color: #ffffff;
-    border: 1px solid #cccccc;
+    border: 1px solid #cbd5e1;        
+    border-radius: 6px;
+    padding: 6px 0px;
+}
+
+QMenu::item {
+    padding: 6px 24px 6px 14px;      
+    background-color: transparent;
 }
 
 QMenu::item:selected {
-    background-color: #e6f2ff;
+    background-color: #f1f5f9;        
+    color: #1496e8;                   
 }
 
-/* ===========================
+/* ============================================================================
    BUTTONS
-   =========================== */
+   ============================================================================ */
 
 QPushButton {
     background-color: #f5f5f5;
@@ -119,7 +135,7 @@ QPushButton#Stop:pressed {
     background-color: #b81a11;
 }
 
-/* Board Viewer (green — zostaje!) */
+/* Board Viewer (green) */
 QPushButton#BoardViewer {
     background-color: #4caf50;
     font-size: 17px;
@@ -137,13 +153,27 @@ QPushButton#BoardViewer:pressed {
 
 /* Add Sources button */
 QPushButton#sources {
+    background-color: #ffffff;
+    border: 1px solid #1496e8;
+    color: #1496e8;
     font-size: 13px;
-    padding: 5px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border-radius: 4px;
 }
 
-/* ===========================
+QPushButton#sources:hover {
+    background-color: #f4f9ff;
+}
+
+QPushButton#sources:pressed {
+    background-color: #e6f2ff;
+    border: 1px solid #0f86cf;
+}
+
+/* ============================================================================
    STATUS BAR
-   =========================== */
+   ============================================================================ */
 
 QStatusBar {
     border-top: 1px solid #DCDCDC;
@@ -156,9 +186,9 @@ QLabel#scan-image {
     margin-right: 10px;
 }
 
-/* ===========================
-   TABLE (QTreeView)
-   =========================== */
+/* ============================================================================
+   TABLE / QTreeView
+   ============================================================================ */
 
 QTreeView {
     background-color: #ffffff;
@@ -179,9 +209,9 @@ QTreeView::item:selected {
     background-color: #006ae9;
 }
 
-/* Header — teraz szary */
+/* Header */
 QHeaderView::section {
-    background-color: #f2f2f2;   /* szare tło nagłówka */
+    background-color: #f2f2f2;
     font-weight: bold;
     color: #605f5f;
     font-size: 12px;
@@ -189,13 +219,15 @@ QHeaderView::section {
     border: 1px solid #dcdcdc;
 }
 
-/* ===========================
+/* ============================================================================
    ABOUT DIALOG
-   =========================== */
+   ============================================================================ */
 
 QLabel#appname {
-    font-weight: bold;
-    font-size: 18px;
+    font-weight: normal;                 
+    font-size: 14px;                  
+    color: #333333;                   
+    letter-spacing: 0px;              
 }
 
 QLabel#version {
@@ -208,9 +240,9 @@ QLabel#copyright {
     color: #777;
 }
 
-/* ===========================
+/* ============================================================================
    INPUTS
-   =========================== */
+   ============================================================================ */
 
 QLineEdit {
     background-color: #ffffff;
@@ -236,9 +268,9 @@ QComboBox QAbstractItemView {
     selection-color: #ffffff;
 }
 
-/* ===========================
+/* ============================================================================
    SCROLLBARS
-   =========================== */
+   ============================================================================ */
 
 QScrollBar:vertical {
     background: #f0f0f0;
@@ -260,17 +292,18 @@ QScrollBar::sub-line:vertical {
     height: 0;
 }
 
-/* ===========================
+/* ============================================================================
    DIALOGS
-   =========================== */
+   ============================================================================ */
 
 QDialog {
     background-color: #ffffff;
     border: 1px solid #dcdcdc;
 }
-/* ==========================================
-   MENU CHECKBOXES — FIXED SPACING
-   ========================================== */
+
+/* ============================================================================
+   MENU CHECKBOXES - FIXED SPACING
+   ============================================================================ */
 
 /* square checkbox */
 QMenu::indicator {
@@ -284,8 +317,8 @@ QMenu::indicator {
     border: 1px solid #444;
     background-color: #ffffff;
 
-    margin-left: 4px;   /* small left margin */
-    margin-right: 6px;  /* space between checkbox and text */
+    margin-left: 4px;
+    margin-right: 6px;
 }
 
 /* checked state */
@@ -298,9 +331,4 @@ QMenu::indicator:checked {
 QMenu::indicator:unchecked {
     background-color: #ffffff;
     border: 1px solid #444;
-}
-
-/* restore normal spacing for ALL menu items */
-QMenu::item {
-    padding: 4px 10px;  /* default padding */
 }
