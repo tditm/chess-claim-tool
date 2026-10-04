@@ -101,6 +101,8 @@ class ChessClaimView(QMainWindow):
         "low_time_action",
         "low_time_spin",
         "flag_fall_action",
+        "sofia_action",
+        "sofia_spin",
     ]
 
     def refresh_table(self):
@@ -155,6 +157,9 @@ class ChessClaimView(QMainWindow):
         self.low_time_action = None
         self.low_time_spin = None
         self.flag_fall_action = None
+        # Sofia rule reminder widgets
+        self.sofia_action = None
+        self.sofia_spin = None
 
     def center(self) -> None:
         """Center the window on the screen."""
@@ -326,6 +331,31 @@ class ChessClaimView(QMainWindow):
         widget_action_flagfall.setDefaultWidget(widget_flagfall)
         options_menu.addAction(widget_action_flagfall)
 
+        # ---------------------------------------------------------
+        # Sofia Rule Reminder (checkbox + spinbox)
+        # ---------------------------------------------------------
+        widget_sofia = QWidget()
+        layout_sofia = QHBoxLayout()
+        layout_sofia.setContentsMargins(10, 2, 10, 2)
+        layout_sofia.setSpacing(0)
+
+        self.sofia_action = QCheckBox("Sofia rule - draw before move completed")
+        self.sofia_action.setChecked(False)
+
+        self.sofia_spin = QSpinBox()
+        self.sofia_spin.setRange(1, 200)
+        self.sofia_spin.setValue(30)
+        self.sofia_spin.setEnabled(False)
+
+        layout_sofia.addWidget(self.sofia_action)
+        layout_sofia.addWidget(self.sofia_spin)
+        layout_sofia.addStretch()
+        widget_sofia.setLayout(layout_sofia)
+
+        widget_action_sofia = QWidgetAction(self)
+        widget_action_sofia.setDefaultWidget(widget_sofia)
+        options_menu.addAction(widget_action_sofia)
+
         # Connect to controller
         self.scoresheet_action.stateChanged.connect(self._update_scoresheet_settings)
         self.scoresheet_spin.valueChanged.connect(self._update_scoresheet_settings)
@@ -347,6 +377,10 @@ class ChessClaimView(QMainWindow):
         self.flag_fall_action.stateChanged.connect(
             lambda state: setattr(self.controller, "flag_fall_reminder_enabled", state)
         )
+
+        # Sofia rule reminder connection
+        self.sofia_action.stateChanged.connect(self._update_sofia_settings)
+        self.sofia_spin.valueChanged.connect(self._update_sofia_settings)
 
         # ---------------------------------------------------------
         # HELP MENU
@@ -376,7 +410,15 @@ class ChessClaimView(QMainWindow):
         self.low_time_spin.setEnabled(enabled)
         self.controller.low_time_reminder_enabled = enabled
         self.controller.low_time_threshold_seconds = self.low_time_spin.value()
-       
+    
+    def _update_sofia_settings(self) -> None:
+        """Update controller settings from Sofia rule menu widgets."""
+        enabled = self.sofia_action.isChecked()
+        self.sofia_spin.setEnabled(enabled)
+
+        self.controller.sofia_rule_enabled = enabled
+        self.controller.sofia_rule_threshold = self.sofia_spin.value()
+
     def create_claims_table(self) -> None:
         """Create and configure the claims table."""
         from PyQt5.QtWidgets import QHeaderView
@@ -536,6 +578,9 @@ class ChessClaimView(QMainWindow):
         """
         Handle click on a claim row and open Board Viewer
         at the correct game and move.
+        
+        BUG FIX #3: Pass game_id to controller for accurate lookup instead of relying
+        solely on game_index which may become stale after PGN reloads.
         """
         first_col_item = self.claims_table_model.item(index.row(), 0)
         if first_col_item is None:
@@ -547,11 +592,13 @@ class ChessClaimView(QMainWindow):
 
         game_index = data.get("game_index")
         move_index = data.get("move_index")
+        game_id = data.get("game_id")  # BUG FIX #3: Get the stored game_id
 
         if game_index is None or move_index is None:
             return
 
-        self.controller.open_viewer_for_claim(game_index, move_index)
+        # BUG FIX #3: Pass game_id to controller for accurate lookup
+        self.controller.open_viewer_for_claim(game_index, move_index, game_id)
 
     def notify(self, claim_type: ClaimType, players: str, move: str) -> None:
         """Send a desktop notification depending on the OS."""
@@ -824,7 +871,7 @@ class AboutDialog(QDialog):
         appname.setObjectName("appname")
         appname.setAlignment(Qt.AlignCenter)
 
-        version = QLabel("Version 0.4.4")
+        version = QLabel("Version 0.4.5")
         version.setObjectName("version")
         version.setAlignment(Qt.AlignCenter)
 
