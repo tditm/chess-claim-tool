@@ -73,8 +73,8 @@ class BoardViewerWindow(QMainWindow):
 
     def _last_clk_for_color(self, nodes, upto_idx: int, is_white: bool):
         """
-        Zwraca ostatni [%clk] dla danej strony (is_white)
-        z węzłów nodes[0..upto_idx].
+        Returns the last [%clk] for a given side (is_white)
+        from nodes[0..upto_idx].
         """
         for i in range(upto_idx, -1, -1):
             if (i % 2 == 0) == is_white:
@@ -86,8 +86,8 @@ class BoardViewerWindow(QMainWindow):
 
     def _last_emt_for_color(self, nodes, upto_idx: int, is_white: bool):
         """
-        Zwraca ostatni [%emt] dla danej strony (is_white)
-        z węzłów nodes[0..upto_idx].
+        Returns the last [%emt] for a given side (is_white)
+        from nodes[0..upto_idx].
         """
         for i in range(upto_idx, -1, -1):
             if (i % 2 == 0) == is_white:
@@ -110,7 +110,7 @@ class BoardViewerWindow(QMainWindow):
             return
 
         self.current_game_index = row
-        index, game = self.filtered_games[row]  # index = numer partii (1-based w PGN)
+        index, game = self.filtered_games[row]  # index = game number (1-based in PGN)
 
         self.current_game = game
         self.current_board = game.board()
