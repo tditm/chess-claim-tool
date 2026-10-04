@@ -23,6 +23,7 @@ import os
 import platform
 import sys
 
+APP_NAME = "Chess Claim Tool - tditm"
 
 def resource_path(relative_path: str) -> str:
     """
@@ -52,7 +53,7 @@ def resource_path(relative_path: str) -> str:
             base_path = os.path.join(current_dir, "views")
 
         # Icons are stored in icons/ (one level above src/)
-        elif relative_path.endswith(".png"):
+        elif relative_path.endswith((".png", ".jpg", ".jpeg", ".ico", ".icns")):
             base_path = os.path.abspath(os.path.join(current_dir, "..", "icons"))
 
         # Default: use the directory of helpers.py
@@ -67,9 +68,9 @@ def get_appdata_path() -> str:
     Return the directory where the application should store its data.
 
     The location depends on the operating system:
-        - Windows → %APPDATA%/Chess Claim Tool
-        - macOS   → ~/Library/Application Support/Chess Claim Tool
-        - Linux   → ~/.local/share/Chess Claim Tool
+        - Windows → %APPDATA%/Chess Claim Tool - tditm
+        - macOS   → ~/Library/Application Support/Chess Claim Tool -tditm
+        - Linux   → ~/.local/share/Chess Claim Tool - tditm
 
     Returns:
         str: Absolute path to the application's data directory.
@@ -87,7 +88,7 @@ def get_appdata_path() -> str:
         # Linux, BSD, and other Unix-like systems
         base_path = os.path.join(os.getenv("HOME"), ".local", "share")
 
-    return os.path.join(base_path, "Chess Claim Tool")
+    return os.path.join(base_path, APP_NAME)
 
 
 class Status(enum.Enum):
