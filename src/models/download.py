@@ -23,7 +23,7 @@ from urllib.error import HTTPError, URLError
 import certifi
 import time
 
-# Stały nagłówek udający normalną przeglądarkę
+# Fixed header that mimics a regular browser
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
     "X-Client": "ChessClaimTool/0.4.3"
@@ -36,7 +36,7 @@ def download_pgn(url: str, timeout=30) -> bytes:
     Returns bytes() on failure.
     """
 
-    for attempt in range(1, 4):  # 3 próby
+    for attempt in range(1, 4):  # 3 attempts
         try:
             req = urllib.request.Request(url, headers=BROWSER_HEADERS)
 
